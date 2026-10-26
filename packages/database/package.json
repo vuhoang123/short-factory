@@ -1,0 +1,29 @@
+{
+  "name": "@shorts-factory/database",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "db:generate": "node --env-file-if-exists=../../.env node_modules/prisma/build/index.js generate --schema ../../prisma/schema.prisma",
+    "db:validate": "node --env-file-if-exists=../../.env node_modules/prisma/build/index.js validate --schema ../../prisma/schema.prisma",
+    "db:migrate": "node --env-file-if-exists=../../.env node_modules/prisma/build/index.js migrate dev --schema ../../prisma/schema.prisma",
+    "db:deploy": "node --env-file-if-exists=../../.env node_modules/prisma/build/index.js migrate deploy --schema ../../prisma/schema.prisma",
+    "db:seed": "node --env-file-if-exists=../../.env --import tsx src/seed.ts",
+    "test:integration": "vitest run test/constraints.integration.test.ts",
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@prisma/client": "6.19.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "prisma": "6.19.0",
+    "tsx": "4.23.15",
+    "vitest": "4.0.18",
+    "typescript": "5.9.3"
+  }
+}

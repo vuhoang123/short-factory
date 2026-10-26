@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "aspectRatio": "9:16",
+  "width": 1080,
+  "height": 1920,
+  "fps": 30,
+  "durationFrames": 1650,
+  "templateId": "reddit-comment-cards-v1",
+  "backgroundAssetId": "licensed-bg-001",
+  "audioAssetId": "audio-fixture-001",
+  "segments": [
+    {
+      "type": "HOOK",
+      "text": "Một câu chuyện đáng bàn...",
+      "sourceRefs": [],
+      "startMs": 0,
+      "endMs": 3500
+    },
+    {
+      "type": "POST",
+      "text": "Nội dung câu chuyện minh họa",
+      "sourceRefs": [
+        "post:fixture-1"
+      ],
+      "startMs": 3500,
+      "endMs": 20000
+    },
+    {
+      "type": "COMMENT",
+      "text": "Bình luận minh họa",
+      "sourceRefs": [
+        "comment:fixture-c1"
+      ],
+      "startMs": 20000,
+      "endMs": 32000
+    }
+  ]
+}

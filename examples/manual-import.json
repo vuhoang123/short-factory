@@ -1,0 +1,30 @@
+{
+  "platform": "MANUAL",
+  "externalPostId": "fixture-story-001",
+  "canonicalUrl": "https://example.org/owned-story",
+  "title": "Câu chuyện demo có quyền sử dụng",
+  "body": "Đây là nội dung ví dụ, do người dùng tự sở hữu.",
+  "comments": [
+    {
+      "externalId": "c1",
+      "body": "Bình luận ví dụ một."
+    },
+    {
+      "externalId": "c2",
+      "body": "Bình luận ví dụ hai."
+    },
+    {
+      "externalId": "c3",
+      "body": "Bình luận ví dụ ba."
+    }
+  ],
+  "rights": {
+    "basis": "OWNED",
+    "commercialAllowed": true,
+    "allowedPlatforms": [
+      "YOUTUBE",
+      "FACEBOOK"
+    ],
+    "attested": true
+  }
+}

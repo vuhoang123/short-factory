@@ -1,0 +1,85 @@
+name: shorts-factory
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-shorts}
+      POSTGRES_DB: ${POSTGRES_DB:-shorts_factory}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run pnpm local:up to generate local secrets}
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?Run pnpm local:up}"]
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?Run pnpm local:up}
+    ports: ["127.0.0.1:6379:6379"]
+    volumes: ["redis-data:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  migrate:
+    build: { context: .., dockerfile: infrastructure/Dockerfile, target: api }
+    command: ["pnpm", "db:deploy"]
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-shorts}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-shorts_factory}?schema=public
+    depends_on:
+      postgres: { condition: service_healthy }
+  api:
+    build: { context: .., dockerfile: infrastructure/Dockerfile, target: api }
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-shorts}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-shorts_factory}?schema=public
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      STORAGE_LOCAL_ROOT: /app/.data/objects
+      API_HOST: 0.0.0.0
+    ports: ["127.0.0.1:3001:3001"]
+    volumes: ["local-objects:/app/.data/objects"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+  discovery-worker:
+    build: { context: .., dockerfile: infrastructure/Dockerfile, target: worker }
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-shorts}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-shorts_factory}?schema=public
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      NODE_ENV: development
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+  web:
+    build:
+      context: ..
+      dockerfile: infrastructure/Dockerfile
+      target: web
+      args: { API_URL: "http://api:3001" }
+    environment:
+      NODE_ENV: production
+      API_URL: http://api:3001
+      NEXT_TELEMETRY_DISABLED: "1"
+    ports: ["127.0.0.1:3000:3000"]
+    depends_on:
+      api: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+volumes:
+  postgres-data:
+  redis-data:
+  local-objects:

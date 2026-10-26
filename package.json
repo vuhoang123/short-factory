@@ -1,0 +1,40 @@
+{
+  "name": "shorts-factory",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.25.0",
+  "engines": { "node": ">=22.12.0" },
+  "scripts": {
+    "dev": "node --env-file-if-exists=.env node_modules/turbo/bin/turbo run dev",
+    "dev:worker": "node --env-file-if-exists=.env node_modules/turbo/bin/turbo run dev --filter=@shorts-factory/discovery-worker",
+    "build": "turbo run build",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit && turbo run typecheck",
+    "test": "vitest run",
+    "test:integration": "node --import tsx scripts/test-integration.ts",
+    "test:browser": "playwright test",
+    "db:generate": "pnpm --filter @shorts-factory/database db:generate",
+    "db:validate": "pnpm --filter @shorts-factory/database db:validate",
+    "db:migrate": "pnpm --filter @shorts-factory/database db:migrate",
+    "db:deploy": "pnpm --filter @shorts-factory/database db:deploy",
+    "db:seed": "pnpm --filter @shorts-factory/database db:seed",
+    "local:up": "node scripts/local-up.mjs",
+    "local:down": "docker compose --env-file .env -f infrastructure/compose.yaml down",
+    "check": "pnpm db:validate && pnpm lint && pnpm typecheck && pnpm test"
+  },
+  "devDependencies": {
+    "@prisma/client": "6.19.0",
+    "prisma": "6.19.0",
+    "@eslint/js": "9.39.1",
+    "@playwright/test": "^1.56.1",
+    "@types/node": "^22.19.0",
+    "eslint": "9.39.1",
+    "globals": "^16.5.0",
+    "tsx": "4.23.15",
+    "turbo": "2.11.10",
+    "typescript": "5.9.3",
+    "typescript-eslint": "^8.47.0",
+    "vitest": "4.0.18"
+  }
+}

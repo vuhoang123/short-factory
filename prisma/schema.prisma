@@ -1,0 +1,542 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../packages/database/generated/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Platform {
+  MANUAL
+  REDDIT
+  THREADS
+  FACEBOOK
+  YOUTUBE
+  TIKTOK
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  EDITOR
+  REVIEWER
+  VIEWER
+}
+
+enum RightsBasis {
+  OWNED
+  LICENSED
+  CONSENTED
+  EXCEPTION_REVIEWED
+  UNKNOWN
+}
+
+enum ReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  BLOCKED
+}
+
+enum PublicationStatus {
+  DRAFT
+  SCHEDULED
+  QUEUED
+  UPLOADING
+  PROCESSING
+  PUBLISHED
+  FAILED_RETRYABLE
+  FAILED_PERMANENT
+  NEEDS_ACTION
+  CANCELLED
+}
+
+model User {
+  id           String            @id @default(uuid())
+  email        String            @unique
+  name         String?
+  passwordHash String
+  createdAt    DateTime          @default(now())
+  memberships  WorkspaceMember[]
+  sessions     Session[]
+}
+
+// Users and sessions are global identity rows; tenant context is a verified membership.
+model Session {
+  id                String           @id @default(uuid())
+  tokenHash         String           @unique
+  userId            String
+  activeWorkspaceId String?
+  expiresAt         DateTime
+  createdAt         DateTime         @default(now())
+  user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  activeMembership  WorkspaceMember? @relation(fields: [activeWorkspaceId, userId], references: [workspaceId, userId], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@index([expiresAt])
+}
+
+model Workspace {
+  id              String               @id @default(uuid())
+  slug            String               @unique
+  name            String
+  timezone        String               @default("Asia/Ho_Chi_Minh")
+  createdAt       DateTime             @default(now())
+  members         WorkspaceMember[]
+  channels        ContentChannel[]
+  topicRules      TopicRule[]
+  sources         SourceConfig[]
+  syncRuns        SourceSyncRun[]
+  posts           SourcePost[]
+  comments        SourceComment[]
+  postMetrics     PostMetricSnapshot[]
+  candidates      ContentCandidate[]
+  accounts        SocialAccount[]
+  stories         StoryProject[]
+  storyVersions   StoryVersion[]
+  videos          Video[]
+  assets          MediaAsset[]
+  rights          ContentRight[]
+  publications    Publication[]
+  publishAttempts PublicationAttempt[]
+  publishMetrics  PublicationMetric[]
+  workflows       WorkflowRun[]
+  outbox          OutboxEvent[]
+  audits          AuditLog[]
+  idempotency     IdempotencyRecord[]
+}
+
+model WorkspaceMember {
+  workspaceId String
+  userId      String
+  role        Role                @default(VIEWER)
+  createdAt   DateTime            @default(now())
+  workspace   Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessions    Session[]
+  reviews     ContentRight[]
+  audits      AuditLog[]
+  idempotency IdempotencyRecord[]
+
+  @@id([workspaceId, userId])
+  @@index([userId])
+}
+
+model ContentChannel {
+  id               String         @id @default(uuid())
+  workspaceId      String
+  name             String
+  language         String         @default("vi")
+  topicConfig      Json
+  automationConfig Json
+  minimumCandidateScore Float        @default(55)
+  createdAt        DateTime       @default(now())
+  workspace        Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  sources          SourceConfig[]
+  topicRules       TopicRule[]
+  posts            SourcePost[]
+  videos           Video[]
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, createdAt])
+}
+
+model SourceConfig {
+  id               String          @id @default(uuid())
+  workspaceId      String
+  channelId        String?
+  platform         Platform
+  sourceKey        String
+  config           Json
+  enabled          Boolean         @default(false)
+  capabilityStatus String          @default("BLOCKED_EXTERNAL")
+  syncFrequencyMinutes Int         @default(1440)
+  lastSyncStatus   String          @default("NEVER")
+  lastErrorCode    String?
+  lastErrorAt      DateTime?
+  nextSyncAt       DateTime?
+  lastSyncAt       DateTime?
+  updatedAt        DateTime        @default(now()) @updatedAt
+  createdAt        DateTime        @default(now())
+  workspace        Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  channel          ContentChannel? @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Restrict)
+  runs             SourceSyncRun[]
+  posts            SourcePost[]
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, platform, sourceKey])
+  @@index([enabled, nextSyncAt])
+}
+
+model SourceSyncRun {
+  id             String       @id @default(uuid())
+  workspaceId    String
+  sourceConfigId String
+  status         String
+  idempotencyKey String?
+  cursor         String?
+  nextCursor     String?
+  fetchedCount   Int          @default(0)
+  duplicateCount Int          @default(0)
+  attempts       Int          @default(0)
+  errorCode      String?
+  startedAt      DateTime     @default(now())
+  finishedAt     DateTime?
+  workspace      Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  source         SourceConfig @relation(fields: [workspaceId, sourceConfigId], references: [workspaceId, id], onDelete: Cascade)
+  metricSnapshots PostMetricSnapshot[]
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, sourceConfigId, idempotencyKey])
+  @@index([workspaceId, sourceConfigId, startedAt])
+}
+
+model SourcePost {
+  id              String               @id @default(uuid())
+  workspaceId     String
+  sourceConfigId  String?
+  channelId       String?
+  platform        Platform
+  externalPostId  String
+  canonicalUrl    String
+  title           String?
+  body            String               @db.Text
+  authorAlias     String?
+  language        String?
+  topicTags       String[]             @default([])
+  contentHash     String
+  rawPayload      Json?
+  synthetic       Boolean              @default(false)
+  sensitiveFlags  String[]             @default([])
+  publishedAt     DateTime?
+  discoveredAt    DateTime             @default(now())
+  deletedAt       DateTime?
+  workspace       Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  source          SourceConfig?        @relation(fields: [workspaceId, sourceConfigId], references: [workspaceId, id], onDelete: Restrict)
+  channel         ContentChannel?      @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Restrict)
+  comments        SourceComment[]
+  rights          ContentRight[]
+  candidates      ContentCandidate[]
+  metricSnapshots PostMetricSnapshot[]
+  stories         StoryProject[]
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, platform, externalPostId])
+  @@unique([workspaceId, platform, contentHash])
+  @@index([workspaceId, discoveredAt])
+}
+
+model SourceComment {
+  id               String     @id @default(uuid())
+  workspaceId      String
+  sourcePostId     String
+  externalId       String
+  parentExternalId String?
+  body             String     @db.Text
+  sensitiveFlags   String[]   @default([])
+  likes            Int?
+  publishedAt      DateTime?
+  workspace        Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  post             SourcePost @relation(fields: [workspaceId, sourcePostId], references: [workspaceId, id], onDelete: Cascade)
+
+  @@unique([workspaceId, id])
+  @@unique([sourcePostId, externalId])
+  @@index([workspaceId, sourcePostId])
+}
+
+model PostMetricSnapshot {
+  id           String     @id @default(uuid())
+  workspaceId  String
+  sourcePostId String
+  sourceSyncRunId String?
+  measuredAt   DateTime   @default(now())
+  likes        Int?
+  replies      Int?
+  shares       Int?
+  views        Int?
+  workspace    Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  post         SourcePost @relation(fields: [workspaceId, sourcePostId], references: [workspaceId, id], onDelete: Cascade)
+  syncRun      SourceSyncRun? @relation(fields: [workspaceId, sourceSyncRunId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, sourcePostId, measuredAt])
+}
+
+model ContentCandidate {
+  id           String     @id @default(uuid())
+  workspaceId  String
+  sourcePostId String
+  score        Float?
+  factors      Json?
+  modelVersion String?
+  reasoning    String?    @db.Text
+  eligibility  Json?
+  minimumScore Float      @default(55)
+  scoredAt     DateTime?
+  status       String     @default("PENDING")
+  createdAt    DateTime   @default(now())
+  workspace    Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  post         SourcePost @relation(fields: [workspaceId, sourcePostId], references: [workspaceId, id], onDelete: Cascade)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, sourcePostId])
+  @@index([workspaceId, status, score])
+}
+
+model TopicRule {
+  id           String         @id @default(uuid())
+  workspaceId  String
+  channelId    String
+  name         String
+  keywords     String[]       @default([])
+  hashtags     String[]       @default([])
+  topics       String[]       @default([])
+  language     String?
+  allow        String[]       @default([])
+  deny         String[]       @default([])
+  minimumScore Float          @default(55)
+  enabled      Boolean        @default(true)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  workspace    Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  channel      ContentChannel  @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Cascade)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, channelId, name])
+  @@index([workspaceId, enabled])
+}
+
+model ContentRight {
+  id                  String           @id @default(uuid())
+  workspaceId         String
+  sourcePostId        String
+  basis               RightsBasis      @default(UNKNOWN)
+  evidenceAssetId     String?
+  evidence            String?          @db.Text
+  attested            Boolean          @default(false)
+  allowedPlatforms    Platform[]       @default([])
+  commercialAllowed   Boolean          @default(false)
+  territory           String           @default("UNSPECIFIED")
+  attributionRequired Boolean          @default(false)
+  attributionText     String?
+  expiresAt           DateTime?
+  reviewStatus        ReviewStatus     @default(PENDING)
+  reviewedById        String?
+  reviewedAt          DateTime?
+  revokedAt           DateTime?
+  createdAt           DateTime         @default(now())
+  workspace           Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  post                SourcePost       @relation(fields: [workspaceId, sourcePostId], references: [workspaceId, id], onDelete: Cascade)
+  evidenceAsset       MediaAsset?      @relation(fields: [workspaceId, evidenceAssetId], references: [workspaceId, id], onDelete: Restrict)
+  reviewer            WorkspaceMember? @relation(fields: [workspaceId, reviewedById], references: [workspaceId, userId], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, reviewStatus])
+  @@index([workspaceId, sourcePostId])
+}
+
+model StoryProject {
+  id           String         @id @default(uuid())
+  workspaceId  String
+  sourcePostId String
+  status       String         @default("DRAFT")
+  workspace    Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  post         SourcePost     @relation(fields: [workspaceId, sourcePostId], references: [workspaceId, id], onDelete: Cascade)
+  versions     StoryVersion[]
+  videos       Video[]
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, sourcePostId])
+}
+
+model StoryVersion {
+  id             String       @id @default(uuid())
+  workspaceId    String
+  storyProjectId String
+  version        Int
+  script         Json
+  modelVersion   String?
+  createdAt      DateTime     @default(now())
+  workspace      Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  story          StoryProject @relation(fields: [workspaceId, storyProjectId], references: [workspaceId, id], onDelete: Cascade)
+
+  @@unique([workspaceId, id])
+  @@unique([storyProjectId, version])
+}
+
+model MediaAsset {
+  id             String         @id @default(uuid())
+  workspaceId    String
+  kind           String
+  storageKey     String
+  checksum       String
+  mimeType       String
+  metadata       Json?
+  rightsMetadata Json?
+  createdAt      DateTime       @default(now())
+  workspace      Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  evidenceFor    ContentRight[]
+  videos         Video[]
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, storageKey])
+}
+
+model Video {
+  id             String         @id @default(uuid())
+  workspaceId    String
+  channelId      String
+  storyProjectId String?
+  title          String
+  status         String         @default("DRAFT")
+  renderManifest Json?
+  mediaAssetId   String?
+  reviewStatus   ReviewStatus   @default(PENDING)
+  createdAt      DateTime       @default(now())
+  workspace      Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  channel        ContentChannel @relation(fields: [workspaceId, channelId], references: [workspaceId, id], onDelete: Restrict)
+  story          StoryProject?  @relation(fields: [workspaceId, storyProjectId], references: [workspaceId, id], onDelete: Restrict)
+  mediaAsset     MediaAsset?    @relation(fields: [workspaceId, mediaAssetId], references: [workspaceId, id], onDelete: Restrict)
+  publications   Publication[]
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, status])
+}
+
+model SocialAccount {
+  id              String        @id @default(uuid())
+  workspaceId     String
+  platform        Platform
+  externalId      String
+  displayName     String
+  secretRef       String?
+  status          String        @default("DISCONNECTED")
+  capabilityFlags Json?
+  workspace       Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  publications    Publication[]
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, platform, externalId])
+}
+
+model Publication {
+  id              String               @id @default(uuid())
+  workspaceId     String
+  videoId         String
+  socialAccountId String
+  status          PublicationStatus    @default(DRAFT)
+  scheduledAt     DateTime?
+  publishedAt     DateTime?
+  remotePostId    String?
+  remoteUrl       String?
+  idempotencyKey  String               @unique
+  metadata        Json?
+  errorCode       String?
+  createdAt       DateTime             @default(now())
+  workspace       Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  video           Video                @relation(fields: [workspaceId, videoId], references: [workspaceId, id], onDelete: Cascade)
+  account         SocialAccount        @relation(fields: [workspaceId, socialAccountId], references: [workspaceId, id], onDelete: Restrict)
+  attempts        PublicationAttempt[]
+  metrics         PublicationMetric[]
+
+  @@unique([workspaceId, id])
+  @@index([status, scheduledAt])
+  @@index([workspaceId, videoId])
+}
+
+model PublicationAttempt {
+  id               String      @id @default(uuid())
+  workspaceId      String
+  publicationId    String
+  attemptNo        Int
+  stage            String
+  operationId      String?
+  uploadSessionRef String?
+  errorCode        String?
+  startedAt        DateTime    @default(now())
+  completedAt      DateTime?
+  workspace        Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  publication      Publication @relation(fields: [workspaceId, publicationId], references: [workspaceId, id], onDelete: Cascade)
+
+  @@unique([workspaceId, id])
+  @@unique([publicationId, attemptNo])
+}
+
+model PublicationMetric {
+  id            String      @id @default(uuid())
+  workspaceId   String
+  publicationId String
+  measuredAt    DateTime    @default(now())
+  metrics       Json
+  workspace     Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  publication   Publication @relation(fields: [workspaceId, publicationId], references: [workspaceId, id], onDelete: Cascade)
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, publicationId, measuredAt])
+}
+
+model WorkflowRun {
+  id          String    @id @default(uuid())
+  workspaceId String
+  entityType  String
+  entityId    String
+  status      String
+  currentStep String?
+  version     Int       @default(1)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, entityType, entityId])
+}
+
+model OutboxEvent {
+  id          String    @id @default(uuid())
+  workspaceId String
+  eventType   String
+  aggregateId String
+  payload     Json
+  createdAt   DateTime  @default(now())
+  publishedAt DateTime?
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, id])
+  @@index([publishedAt, createdAt])
+}
+
+model AuditLog {
+  id           String           @id @default(uuid())
+  workspaceId  String
+  actorId      String?
+  action       String
+  resourceType String
+  resourceId   String
+  metadata     Json?
+  occurredAt   DateTime         @default(now())
+  workspace    Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  actor        WorkspaceMember? @relation(fields: [workspaceId, actorId], references: [workspaceId, userId], onDelete: Restrict)
+
+  @@unique([workspaceId, id])
+  @@index([workspaceId, occurredAt])
+}
+
+model IdempotencyRecord {
+  id          String          @id @default(uuid())
+  workspaceId String
+  userId      String
+  route       String
+  key         String
+  requestHash String
+  response    Json
+  statusCode  Int
+  createdAt   DateTime        @default(now())
+  workspace   Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  member      WorkspaceMember @relation(fields: [workspaceId, userId], references: [workspaceId, userId], onDelete: Cascade)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, userId, route, key])
+  @@index([createdAt])
+}

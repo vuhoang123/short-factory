@@ -1,0 +1,20 @@
+{
+  "name": "@shorts-factory/discovery-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@shorts-factory/database": "workspace:*",
+    "@shorts-factory/shared": "workspace:*",
+    "@shorts-factory/sources": "workspace:*",
+    "bullmq": "^6.4.2",
+    "ioredis": "^6.0.0",
+    "zod": "4.6.7"
+  }
+}

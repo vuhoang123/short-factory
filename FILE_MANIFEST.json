@@ -1,0 +1,82 @@
+{
+  "project": "shorts-factory-codex",
+  "type": "implementation-specification-and-starter-contracts",
+  "files": [
+    {
+      "path": ".env.example",
+      "bytes": 522
+    },
+    {
+      "path": "AGENTS.md",
+      "bytes": 2119
+    },
+    {
+      "path": "CODEX_START_HERE.md",
+      "bytes": 1364
+    },
+    {
+      "path": "README.md",
+      "bytes": 1649
+    },
+    {
+      "path": "contracts/publisher-adapter.ts",
+      "bytes": 1080
+    },
+    {
+      "path": "contracts/source-adapter.ts",
+      "bytes": 1112
+    },
+    {
+      "path": "docs/01-PRD.md",
+      "bytes": 3276
+    },
+    {
+      "path": "docs/02-ARCHITECTURE.md",
+      "bytes": 2864
+    },
+    {
+      "path": "docs/03-DATA-MODEL.md",
+      "bytes": 2052
+    },
+    {
+      "path": "docs/04-WORKFLOWS.md",
+      "bytes": 2272
+    },
+    {
+      "path": "docs/05-SOURCES.md",
+      "bytes": 2172
+    },
+    {
+      "path": "docs/06-PUBLISHING.md",
+      "bytes": 2418
+    },
+    {
+      "path": "docs/07-API.md",
+      "bytes": 2907
+    },
+    {
+      "path": "docs/08-DELIVERY-PLAN.md",
+      "bytes": 2564
+    },
+    {
+      "path": "docs/09-DECISIONS-AND-RISKS.md",
+      "bytes": 1330
+    },
+    {
+      "path": "docs/10-UI-SCREENS.md",
+      "bytes": 1266
+    },
+    {
+      "path": "examples/manual-import.json",
+      "bytes": 684
+    },
+    {
+      "path": "examples/render-manifest.json",
+      "bytes": 785
+    },
+    {
+      "path": "prisma/schema.prisma",
+      "bytes": 8756
+    }
+  ]
+}
