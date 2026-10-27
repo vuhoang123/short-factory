@@ -203,13 +203,41 @@ export class ContentService {
     return this.mutation(request, context, '/takedowns', input, async (tx) => {
       const post = await tx.sourcePost.findFirst({ where: { id: input.postId, workspaceId: context.workspaceId } });
       if (!post) return notFound();
+      const evidenceAssets = await tx.contentRight.findMany({ where: { workspaceId: context.workspaceId, sourcePostId: post.id }, select: { evidenceAssetId: true } });
+      const stories = await tx.storyProject.findMany({ where: { workspaceId: context.workspaceId, sourcePostId: post.id }, select: { id: true } });
+      const storyIds = stories.map((story) => story.id);
+      const runs = storyIds.length ? await tx.productionRun.findMany({ where: { workspaceId: context.workspaceId, storyProjectId: { in: storyIds } }, select: { id: true } }) : [];
+      const runIds = runs.map((run) => run.id);
+      const videos = storyIds.length ? await tx.video.findMany({ where: { workspaceId: context.workspaceId, storyProjectId: { in: storyIds } }, select: { id: true, mediaAssetId: true } }) : [];
+      const audios = storyIds.length ? await tx.audioAsset.findMany({ where: { workspaceId: context.workspaceId, storyVersion: { storyProjectId: { in: storyIds } } }, select: { mediaAssetId: true } }) : [];
+      const mediaAssetIds = [...new Set([...videos.map((video) => video.mediaAssetId), ...audios.map((audio) => audio.mediaAssetId), ...evidenceAssets.map((right) => right.evidenceAssetId)].filter((id): id is string => Boolean(id)))];
       await tx.sourceComment.deleteMany({ where: { workspaceId: context.workspaceId, sourcePostId: post.id } });
       await tx.contentRight.updateMany({ where: { workspaceId: context.workspaceId, sourcePostId: post.id }, data: { reviewStatus: 'BLOCKED', revokedAt: new Date(), evidence: null, attributionText: null, evidenceAssetId: null } });
       await tx.sourcePost.update({ where: { workspaceId_id: { workspaceId: context.workspaceId, id: post.id } }, data: { body: '[removed]', title: null, authorAlias: null, canonicalUrl: 'https://example.invalid/removed', deletedAt: post.deletedAt ?? new Date() } });
-      // Derived private text is removed along with its source, even when later phases have created a story.
+      await tx.contentCandidate.updateMany({ where: { workspaceId: context.workspaceId, sourcePostId: post.id }, data: { status: 'TAKEN_DOWN', reasoning: null, factors: Prisma.DbNull, eligibility: Prisma.DbNull } });
+      await tx.video.updateMany({ where: { workspaceId: context.workspaceId, storyProjectId: { in: storyIds } }, data: { title: 'Content removed', status: 'BLOCKED_RIGHTS', reviewStatus: 'BLOCKED', storyVersionId: null, mediaAssetId: null, renderManifest: Prisma.DbNull } });
+      if (runIds.length) {
+        await tx.renderManifest.deleteMany({ where: { workspaceId: context.workspaceId, productionRunId: { in: runIds } } });
+        await tx.productionStage.updateMany({ where: { workspaceId: context.workspaceId, productionRunId: { in: runIds } }, data: { output: Prisma.DbNull } });
+        await tx.productionRun.updateMany({ where: { workspaceId: context.workspaceId, id: { in: runIds } }, data: { status: 'BLOCKED_RIGHTS', errorCode: 'CONTENT_TAKEN_DOWN', completedAt: new Date() } });
+        await tx.renderJob.updateMany({ where: { workspaceId: context.workspaceId, productionRunId: { in: runIds } }, data: { status: 'BLOCKED_RIGHTS', errorCode: 'CONTENT_TAKEN_DOWN', completedAt: new Date() } });
+      }
       await tx.storyVersion.deleteMany({ where: { workspaceId: context.workspaceId, story: { sourcePostId: post.id } } });
       await tx.storyProject.updateMany({ where: { workspaceId: context.workspaceId, sourcePostId: post.id }, data: { status: 'BLOCKED_RIGHTS' } });
-      await tx.video.updateMany({ where: { workspaceId: context.workspaceId, story: { sourcePostId: post.id } }, data: { status: 'BLOCKED_RIGHTS', reviewStatus: 'BLOCKED', renderManifest: Prisma.DbNull } });
+      for (const id of mediaAssetIds) {
+        const [asset, videoRefs, audioRefs, evidenceRefs] = await Promise.all([
+          tx.mediaAsset.findFirst({ where: { id, workspaceId: context.workspaceId }, select: { storageKey: true, checksum: true } }),
+          tx.video.count({ where: { workspaceId: context.workspaceId, mediaAssetId: id } }),
+          tx.audioAsset.count({ where: { workspaceId: context.workspaceId, mediaAssetId: id } }),
+          tx.contentRight.count({ where: { workspaceId: context.workspaceId, evidenceAssetId: id } }),
+        ]);
+        if (asset && videoRefs === 0 && audioRefs === 0 && evidenceRefs === 0) {
+          const mediaAsset = await tx.mediaAsset.findFirstOrThrow({ where: { id, workspaceId: context.workspaceId }, select: { id: true } });
+          const event = await tx.outboxEvent.create({ data: { workspaceId: context.workspaceId, eventType: 'MEDIA_ASSET_DELETE_REQUESTED', aggregateId: mediaAsset.id, payload: { entityId: mediaAsset.id, workspaceId: context.workspaceId, storageKey: asset.storageKey, checksum: asset.checksum } } });
+          await tx.mediaAsset.delete({ where: { workspaceId_id: { workspaceId: context.workspaceId, id } } });
+          await tx.auditLog.create({ data: { workspaceId: context.workspaceId, actorId: context.userId, action: 'MEDIA_ASSET_DELETE_QUEUED', resourceType: 'MediaAsset', resourceId: mediaAsset.id, metadata: { outboxEventId: event.id } } });
+        }
+      }
       await tx.publication.updateMany({ where: { workspaceId: context.workspaceId, video: { story: { sourcePostId: post.id } }, status: { not: 'PUBLISHED' } }, data: { status: 'CANCELLED', errorCode: 'CONTENT_TAKEN_DOWN' } });
       await this.audit(tx, context, 'CONTENT_TAKEN_DOWN', 'SourcePost', post.id, { reasonCode: 'USER_REQUEST' });
       await this.event(tx, context, 'CONTENT_TAKEN_DOWN', post.id);
@@ -230,10 +258,11 @@ export class ContentService {
       this.db.contentCandidate.count({ where: { workspaceId, status: { in: ['PENDING_REVIEW', 'NEEDS_RIGHTS_REVIEW'] } } }),
       this.db.sourceConfig.count({ where: { workspaceId, capabilityStatus: { in: ['NOT_CONFIGURED', 'ACCESS_NOT_APPROVED', 'BLOCKED_EXTERNAL'] } } }),
     ]);
-    return { counts: { posts, comments, channels, sources, pendingRights, blockedRights, candidates, pendingSources }, phase: 'PHASE_2', blockers: [
+    return { counts: { posts, comments, channels, sources, pendingRights, blockedRights, candidates, pendingSources }, phase: 'PHASE_3', blockers: [
       { code: 'BLOCKED_EXTERNAL', message: 'External source adapters require verified provider approval and remain disabled.' },
       { code: 'NEEDS_ACTION', message: 'TikTok uses manual export and creator handoff.' },
-    ], integrations: { sources: 'MANUAL_AND_SYNTHETIC_DEMO', publishing: 'BLOCKED_EXTERNAL', tiktok: 'NEEDS_ACTION' } };
+      { code: 'REVIEW_REQUIRED', message: 'Rendered videos require workspace review before any later publishing workflow.' },
+    ], integrations: { sources: 'MANUAL_AND_SYNTHETIC_DEMO', media: 'LOCAL_RENDER_AND_TTS', publishing: 'BLOCKED_EXTERNAL', tiktok: 'NEEDS_ACTION' } };
   }
 
   async auditLogs(request: Request, raw: unknown) {

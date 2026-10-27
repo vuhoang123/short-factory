@@ -14,6 +14,8 @@ it('scopes immutable objects by workspace and rejects traversal', async () => {
     const object = await store.put(workspaceId, bytes);
     expect(await store.put(workspaceId, bytes)).toEqual(object);
     expect(await store.get(workspaceId, object.checksum)).toEqual(bytes);
+    await store.delete(workspaceId, object.checksum);
+    await expect(store.get(workspaceId, object.checksum)).rejects.toThrow();
     await expect(store.get(randomUUID(), object.checksum)).rejects.toThrow();
     await expect(store.put('../escape', bytes)).rejects.toThrow();
     await expect(store.get(workspaceId, '../../secret')).rejects.toThrow();

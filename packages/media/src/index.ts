@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
 
@@ -29,4 +29,16 @@ export class LocalObjectStore {
     if (createHash('sha256').update(bytes).digest('hex') !== checksum) throw new Error('Corrupt object');
     return bytes;
   }
+  async delete(workspaceId: string, checksum: string): Promise<void> {
+    await rm(this.objectPath(workspaceId, checksum), { force: true });
+  }
 }
+
+export * from './contracts.js';
+export * from './script.js';
+export * from './alignment.js';
+export * from './tts.js';
+export * from './subtitles.js';
+export * from './manifest.js';
+export * from './background.js';
+export * from './render.js';

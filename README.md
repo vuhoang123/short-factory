@@ -1,6 +1,6 @@
 # Shorts Factory
 
-A hybrid editorial MVP with workspace isolation from the first import. Phase 0/1 provide the foundation and manual editorial workflow. The Phase 2 Content Discovery Engine adds synthetic demo discovery, the durable outbox/BullMQ path, explainable scoring, candidate review and source management. Video generation and publishing remain in later phases.
+A hybrid editorial MVP with workspace isolation from the first import. Phase 0–3 provide the identity, discovery, rights and media workflow. Phase 5 adds a versioned Autopilot workflow, estimated-cost controls, human review, permitted analytics snapshots and evidence-backed recommendations. The current checkout's Phase 4 publishing integration remains blocked; mock publishing is restricted to development/test.
 
 ## Start locally
 
@@ -15,7 +15,7 @@ pnpm local:up
 
 Open [http://localhost:3000](http://localhost:3000), choose **Create account**, and create a workspace. No vendor account, provider secret or seeded password is required. Docker publishes application and database ports on the local machine only.
 
-See [local development](docs/11-LOCAL-DEVELOPMENT.md) for host development, worker commands, permissions and troubleshooting. See the [Phase 0/1 report](docs/12-PHASE-0-1-REPORT.md) and the [Phase 2 discovery report](docs/13-PHASE-2-REPORT.md) for verification results and remaining gates.
+See [local development](docs/11-LOCAL-DEVELOPMENT.md) for worker commands and the sample-render workflow. See the [Phase 0/1 report](docs/12-PHASE-0-1-REPORT.md), [Phase 2 report](docs/13-PHASE-2-REPORT.md), [Phase 3 report](docs/14-PHASE-3-REPORT.md), and [Phase 5 report](docs/15-PHASE-5-REPORT.md) for verification results and remaining gates.
 
 ## Available now
 
@@ -27,12 +27,18 @@ See [local development](docs/11-LOCAL-DEVELOPMENT.md) for host development, work
 - Server-side rights eligibility checks, author deletion/takedown handling and audit records.
 - Dashboard, channels, source controls and sync history, all-post and candidate-library views, rights review and workspace/topic settings.
 - PostgreSQL migrations, Redis/BullMQ worker, immutable local object storage, typed adapter contracts and development mocks.
+- `/studio` selects approved candidates, creates source-grounded scripts, edits versions, queues production, shows durable stage progress, previews completed MP4s, and downloads authorized media. Runs and media are workspace-scoped and rights-checked again before access.
+- Remotion renders two deterministic vertical templates with stylized Reddit, Threads, Facebook and manual post/comment cards, approved static image backgrounds, narration audio, SRT/subtitle timelines and metadata checks. The committed smoke command renders a real sample MP4.
+- Script generation has deterministic and optional OpenAI adapters. TTS has deterministic tone, local speech (SAPI/eSpeak NG), and optional OpenAI adapters. Approximate subtitle word timings are marked as approximate.
+- `/autopilot` stores immutable rule versions and per-run snapshots, schedules work with timezone-aware rules, ranks eligible candidates, reserves estimated budget, supports dry run/cancel/retry/emergency stop, and routes output through the existing media worker and human QC approval.
+- `/analytics` records nullable metrics with provider/scope/freshness metadata, shows history and sample-backed recommendations, and keeps experiments review-required. Missing metrics are not represented as zeros.
+- A PostgreSQL outbox-backed automation worker resumes runs and analytics syncs. Test-only YouTube/Facebook publication uses the explicit mock adapter; provider publishing and live analytics remain blocked pending verified access.
 
-Unknown, expired, revoked or unreviewed rights block downstream use. External source adapters report `NOT_CONFIGURED` or `ACCESS_NOT_APPROVED` and remain `BLOCKED_EXTERNAL` until verified official API/licensed integrations exist. Scoring uses a deterministic heuristic because this codebase has no AI provider abstraction. No script generation, video rendering, external publishing or TikTok export feature is shipped here.
+Unknown, expired, revoked or unreviewed rights block production. The default mock TTS emits a clearly labeled deterministic test tone; configure local speech or a provider for usable narration. Background video processing, remote R2 storage, advanced script editing, and some preview controls remain outside the current Phase 3 slice. External source adapters, production publisher adapters, TikTok direct posting and live analytics remain `BLOCKED_EXTERNAL`; no live platform posting is shipped.
 
 ## Architecture and specifications
 
-The implemented foundation uses pnpm/Turborepo, Next.js, NestJS, PostgreSQL/Prisma, Zod, BullMQ and Vitest/Playwright. PostgreSQL remains authoritative; Redis carries repeatable queue delivery. Local content-addressed object storage is available for development. Remotion, FFmpeg and production object storage belong to the later media phase.
+The implemented foundation uses pnpm/Turborepo, Next.js, NestJS, PostgreSQL/Prisma, Zod, BullMQ and Vitest/Playwright. PostgreSQL remains authoritative; Redis carries repeatable queue delivery. Local content-addressed storage is used in development. Remotion and its managed FFmpeg renderer produce media; production object storage and approved platform integrations still require deployment work.
 
 Read the original specifications before extending affected modules:
 

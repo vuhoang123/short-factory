@@ -1,0 +1,9 @@
+{
+  "name": "@shorts-factory/automation",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts", "./contracts": "./src/rules.ts" },
+  "scripts": { "typecheck": "tsc --noEmit", "build": "tsc --noEmit" },
+  "dependencies": { "@shorts-factory/shared": "workspace:*", "@shorts-factory/media": "workspace:*", "zod": "4.6.7" }
+}

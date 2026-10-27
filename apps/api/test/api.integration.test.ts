@@ -73,8 +73,12 @@ integration('Phase 2 PostgreSQL discovery and rights vertical slice', () => {
       await db.$transaction([
         db.idempotencyRecord.deleteMany({ where: scope }), db.auditLog.deleteMany({ where: scope }),
         db.session.deleteMany({ where: { userId: { in: userIds } } }),
+        db.analyticsSyncRun.deleteMany({ where: scope }), db.experimentAssignment.deleteMany({ where: scope }), db.experiment.deleteMany({ where: scope }),
+        db.contentQualityReport.deleteMany({ where: scope }), db.candidateSelectionDecision.deleteMany({ where: scope }), db.usageEvent.deleteMany({ where: scope }), db.budgetReservation.deleteMany({ where: scope }), db.budgetPolicy.deleteMany({ where: scope }), db.workflowStep.deleteMany({ where: scope }),
+        db.automationRuleVersion.deleteMany({ where: scope }), db.automationRule.deleteMany({ where: scope }), db.performanceRecommendation.deleteMany({ where: scope }),
         db.publicationMetric.deleteMany({ where: scope }), db.publicationAttempt.deleteMany({ where: scope }), db.publication.deleteMany({ where: scope }),
-        db.video.deleteMany({ where: scope }), db.storyVersion.deleteMany({ where: scope }), db.storyProject.deleteMany({ where: scope }),
+        db.renderJob.deleteMany({ where: scope }), db.renderManifest.deleteMany({ where: scope }), db.productionStage.deleteMany({ where: scope }),
+        db.video.deleteMany({ where: scope }), db.subtitleTrack.deleteMany({ where: scope }), db.audioAsset.deleteMany({ where: scope }), db.storyVersion.deleteMany({ where: scope }), db.productionRun.deleteMany({ where: scope }), db.storyProject.deleteMany({ where: scope }),
         db.contentRight.deleteMany({ where: scope }), db.sourceComment.deleteMany({ where: scope }), db.postMetricSnapshot.deleteMany({ where: scope }), db.contentCandidate.deleteMany({ where: scope }), db.sourcePost.deleteMany({ where: scope }),
         db.sourceSyncRun.deleteMany({ where: scope }), db.sourceConfig.deleteMany({ where: scope }), db.topicRule.deleteMany({ where: scope }), db.contentChannel.deleteMany({ where: scope }), db.mediaAsset.deleteMany({ where: scope }),
         db.workflowRun.deleteMany({ where: scope }), db.outboxEvent.deleteMany({ where: scope }), db.socialAccount.deleteMany({ where: scope }),
@@ -264,6 +268,49 @@ integration('Phase 2 PostgreSQL discovery and rights vertical slice', () => {
     expect((await post(reviewer, `/candidates/${candidate.id}/review`, { decision: 'APPROVED' })).body.status).toBe('APPROVED');
     expect((await ownerA.get(`${prefix}/posts/${postId}/eligibility?platform=TIKTOK`)).body.reasons).toContain('PLATFORM_NOT_ALLOWED');
     expect((await post(reviewer, `/posts/${postId}/rights/review`, { decision: 'REJECTED' })).status).toBe(409);
+  });
+
+  it('queues only approved candidate production idempotently and scopes runs, stories and videos to the active workspace', async () => {
+    const channel = await post(ownerA, '/channels', { name: 'Phase 3 review channel', language: 'vi' });
+    expect(channel.status).toBe(201);
+    const candidate = await db.contentCandidate.findFirstOrThrow({ where: { workspaceId: workspaceA, sourcePostId: postId } });
+    const profiles = await ownerA.get(`${prefix}/voice-profiles`);
+    expect(profiles.status).toBe(200);
+    const profile = profiles.body.items[0] as { id: string; voiceId: string } | undefined;
+    expect(profile).toBeTruthy();
+    const body = {
+      channelId: channel.body.id as string, commentIds: [], language: 'vi', targetDurationSec: 30, style: 'STORYTELLING',
+      voiceProfileId: profile?.id, speakingRate: 1, templateId: 'SocialCommentary', backgroundAssetId: null,
+      subtitlePreset: 'ClassicCaption', theme: 'dark', anonymizeAuthors: true, showEngagement: false,
+    };
+    const key = randomUUID();
+    const first = await post(editor, `/candidates/${candidate.id}/produce`, body, key);
+    const replay = await post(editor, `/candidates/${candidate.id}/produce`, body, key);
+    expect(first.status).toBe(201);
+    expect(replay.body).toEqual(first.body);
+    expect(first.body.status).toBe('QUEUED');
+    expect(await db.productionRun.count({ where: { workspaceId: workspaceA, id: first.body.runId as string } })).toBe(1);
+    expect(await db.outboxEvent.count({ where: { workspaceId: workspaceA, aggregateId: first.body.runId as string, eventType: 'PRODUCTION_RUN_REQUESTED' } })).toBe(1);
+    expect((await ownerB.get(`${prefix}/production-runs/${first.body.runId}`)).status).toBe(404);
+    expect((await ownerB.get(`${prefix}/stories/${first.body.storyProjectId}`)).status).toBe(404);
+    expect((await ownerB.get(`${prefix}/videos`)).body.items).toEqual([]);
+    expect((await ownerA.get(`${prefix}/production-runs/${first.body.runId}`)).body.status).toBe('QUEUED');
+  });
+
+  it('lets reviewers approve completed videos once, with rights checks and workspace isolation', async () => {
+    const channel = await db.contentChannel.create({ data: { workspaceId: workspaceA, name: 'Video review fixture', topicConfig: {}, automationConfig: {} } });
+    const story = await db.storyProject.create({ data: { workspaceId: workspaceA, sourcePostId: postId, channelId: channel.id } });
+    const asset = await db.mediaAsset.create({ data: { workspaceId: workspaceA, kind: 'VIDEO', storageKey: `review/${randomUUID()}.mp4`, checksum: randomUUID().replaceAll('-', ''), mimeType: 'video/mp4' } });
+    const video = await db.video.create({ data: { workspaceId: workspaceA, channelId: channel.id, storyProjectId: story.id, title: 'Review fixture', status: 'READY_FOR_REVIEW', reviewStatus: 'PENDING', mediaAssetId: asset.id } });
+    const key = randomUUID();
+    const approved = await post(reviewer, `/videos/${video.id}/reviews`, { decision: 'APPROVED' }, key);
+    expect(approved.status).toBe(201);
+    expect(approved.body).toMatchObject({ videoId: video.id, status: 'APPROVED', reviewStatus: 'APPROVED' });
+    expect((await post(reviewer, `/videos/${video.id}/reviews`, { decision: 'APPROVED' }, key)).body).toEqual(approved.body);
+    expect((await post(reviewer, `/videos/${video.id}/reviews`, { decision: 'REJECTED' })).status).toBe(409);
+    expect((await post(editor, `/videos/${video.id}/reviews`, { decision: 'APPROVED' })).status).toBe(403);
+    expect((await post(ownerB, `/videos/${video.id}/reviews`, { decision: 'APPROVED' })).status).toBe(404);
+    expect(await db.auditLog.count({ where: { workspaceId: workspaceA, resourceType: 'Video', resourceId: video.id, action: 'VIDEO_REVIEW_DECIDED' } })).toBe(1);
   });
 
   it('keeps direct publication API fail-closed for unknown and expired rights without persisting any publish job', async () => {

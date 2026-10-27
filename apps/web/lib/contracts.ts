@@ -40,9 +40,9 @@ export const commentSchema = z.object({ id: z.string(), externalId: z.string(), 
 export const auditSchema = z.object({ id: z.string(), action: z.string(), resourceType: z.string(), resourceId: z.string(), occurredAt: z.string() });
 export const dashboardSchema = z.object({
   blockers: z.array(z.object({ code: z.string(), message: z.string() })),
-  phase: z.literal('PHASE_2'),
+  phase: z.literal('PHASE_3'),
   counts: z.object({ posts: z.number(), comments: z.number(), channels: z.number(), sources: z.number(), pendingRights: z.number(), blockedRights: z.number(), candidates: z.number(), pendingSources: z.number() }),
-  integrations: z.object({ sources: z.string(), publishing: z.string(), tiktok: z.string() }),
+  integrations: z.object({ sources: z.string(), media: z.string(), publishing: z.string(), tiktok: z.string() }),
 });
 export const eligibilitySchema = z.object({ allowed: z.boolean(), reasons: z.array(z.string()) });
 export function paginated<T extends z.ZodTypeAny>(item: T) {

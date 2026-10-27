@@ -20,3 +20,8 @@ You are implementing Shorts Factory, a production-minded hybrid MVP. Read all fi
 ## Coding skills
 - Use the installed `ponytail` skill in `full` mode by default for coding tasks in this repository; read `C:/Users/ACER/.codex/skills/ponytail/SKILL.md` before applying it. Follow any explicit user request to change the mode or stop using the skill.
 - Apply Ponytail within the current delivery phase and keep the mandatory standards and checked-in specifications authoritative. Prefer the smallest complete change while preserving required validation, tenant isolation, transactions/outbox, idempotency, adapters, rights checks and tests.
+
+## Delivery status
+- Phase 0–2 implementation and verification are recorded in `docs/12-PHASE-0-1-REPORT.md` and `docs/13-PHASE-2-REPORT.md`.
+- Phase 3 implementation status, verification, and remaining gates are recorded in `docs/14-PHASE-3-REPORT.md`; do not describe the phase as complete until its render, build, and database-backed workflow gates pass.
+- Phase 4 publishing has not shipped. Keep unapproved providers and permissions marked `BLOCKED_EXTERNAL` and retain human review before any publishing workflow.

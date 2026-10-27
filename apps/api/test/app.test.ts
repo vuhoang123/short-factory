@@ -18,7 +18,7 @@ describe('Nest API smoke with an explicit database mock', () => {
   it('boots health without provider credentials and exposes safe response headers', async () => {
     const response = await supertest(app.getHttpServer()).get('/api/v1/health');
     expect(response.status).toBe(200);
-    expect(response.body).toMatchObject({ status: 'ok', database: 'ok', phase: 'PHASE_2', integrations: 'synthetic-demo-and-manual-only' });
+    expect(response.body).toMatchObject({ status: 'ok', database: 'ok', phase: 'PHASE_3', integrations: 'discovery-and-local-media-no-publisher' });
     expect(response.headers['cache-control']).toBe('no-store');
     expect(response.headers['x-content-type-options']).toBe('nosniff');
     expect(response.headers['x-request-id']).toBeTruthy();

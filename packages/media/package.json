@@ -1,1 +1,21 @@
-{ "name": "@shorts-factory/media", "version": "0.1.0", "private": true, "type": "module", "exports": { ".": "./src/index.ts" }, "scripts": { "typecheck": "tsc --noEmit", "build": "tsc --noEmit" }, "dependencies": { "zod": "4.6.7" } }
+{
+  "name": "@shorts-factory/media",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./composition": "./src/composition.tsx",
+    "./contracts": "./src/contracts.ts"
+  },
+  "scripts": { "typecheck": "tsc --noEmit", "build": "tsc --noEmit", "test": "vitest run src" },
+  "dependencies": {
+    "@remotion/bundler": "4.0.538",
+    "@remotion/renderer": "4.0.538",
+    "react": "19.3.1",
+    "remotion": "4.0.538",
+    "sharp": "0.35.5",
+    "zod": "4.6.7"
+  },
+  "devDependencies": { "@types/react": "19.2.0" }
+}

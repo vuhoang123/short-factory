@@ -61,6 +61,30 @@ services:
     depends_on:
       migrate: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
+  media-worker:
+    build: { context: .., dockerfile: infrastructure/Dockerfile, target: media-worker }
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-shorts}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-shorts_factory}?schema=public
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      STORAGE_LOCAL_ROOT: /app/.data/objects
+      NODE_ENV: development
+    volumes: ["local-objects:/app/.data/objects"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+  automation-worker:
+    build: { context: .., dockerfile: infrastructure/Dockerfile, target: automation-worker }
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-shorts}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-shorts_factory}?schema=public
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      STORAGE_LOCAL_ROOT: /app/.data/objects
+      NODE_ENV: development
+    volumes: ["local-objects:/app/.data/objects"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
   web:
     build:
       context: ..

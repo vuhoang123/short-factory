@@ -1,6 +1,6 @@
 import 'reflect-metadata';
 import { randomUUID } from 'node:crypto';
-import { ArgumentsHost, Body, Catch, Controller, Delete, ExceptionFilter, Get, HttpException, Inject, Module, Param, Patch, Post, Query, Req, Res } from '@nestjs/common';
+import { ArgumentsHost, Body, Catch, Controller, Delete, ExceptionFilter, Get, HttpException, Inject, Module, Param, Patch, Post, Put, Query, Req, Res } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { ApiCookieAuth, ApiTags, DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import express, { type NextFunction, type Request, type Response } from 'express';
@@ -10,11 +10,17 @@ import { AuthService } from './auth/auth.service.js';
 import { ContentService } from './content.service.js';
 import { DiscoveryService } from './discovery.service.js';
 import { ApiError } from './errors.js';
+import { ProductionService } from './production.service.js';
+import { AutomationService } from './automation.service.js';
+import { AnalyticsService } from './analytics.service.js';
 
 const AUTH = Symbol('AuthService');
 const CONTENT = Symbol('ContentService');
 const DISCOVERY = Symbol('DiscoveryService');
 const DATABASE = Symbol('Database');
+const PRODUCTION = Symbol('ProductionService');
+const AUTOMATION = Symbol('AutomationService');
+const ANALYTICS = Symbol('AnalyticsService');
 type ApiRequest = Request & { requestId: string };
 
 @Catch()
@@ -98,13 +104,68 @@ class ContentController {
   @Post('publications') publications(@Req() request: Request, @Body() body: unknown) { return this.content.publications(request, body); }
 }
 
+@ApiTags('media-production')
+@ApiCookieAuth('sf_session')
+@Controller('api/v1')
+class ProductionController {
+  constructor(@Inject(PRODUCTION) private readonly production: ProductionService) {}
+
+  @Get('voice-profiles') voices(@Req() request: Request) { return this.production.voiceProfiles(request); }
+  @Get('video-templates') templates(@Req() request: Request) { return this.production.templates(request); }
+  @Get('backgrounds') backgrounds(@Req() request: Request) { return this.production.backgrounds(request); }
+  @Post('backgrounds') uploadBackground(@Req() request: Request) { return this.production.uploadBackground(request, request.body); }
+  @Get('media/:id') media(@Req() request: Request, @Param('id') id: string, @Res() response: Response, @Query('download') download?: string) { z.string().uuid().parse(id); return this.production.sendAsset(request, id, response, download === '1'); }
+  @Post('candidates/:id/produce') produce(@Req() request: Request, @Param('id') id: string, @Body() body: unknown) { z.string().uuid().parse(id); return this.production.createFromCandidate(request, id, body); }
+  @Get('stories/:id') story(@Req() request: Request, @Param('id') id: string) { z.string().uuid().parse(id); return this.production.story(request, id); }
+  @Patch('stories/:id') editStory(@Req() request: Request, @Param('id') id: string, @Body() body: unknown) { z.string().uuid().parse(id); return this.production.editStory(request, id, body); }
+  @Post('stories/:id/regenerate') regenerate(@Req() request: Request, @Param('id') id: string, @Body() body: unknown) { z.string().uuid().parse(id); return this.production.regenerateStory(request, id, body); }
+  @Post('stories/:id/audio') audio(@Req() request: Request, @Param('id') id: string, @Body() body: unknown) { z.string().uuid().parse(id); return this.production.requestAudio(request, id, body); }
+  @Get('production-runs/:id') run(@Req() request: Request, @Param('id') id: string) { z.string().uuid().parse(id); return this.production.productionRun(request, id); }
+  @Post('production-runs/:id/retry') retry(@Req() request: Request, @Param('id') id: string) { z.string().uuid().parse(id); return this.production.retryRun(request, id); }
+  @Get('videos') videos(@Req() request: Request) { return this.production.videos(request); }
+  @Get('videos/:id') video(@Req() request: Request, @Param('id') id: string) { z.string().uuid().parse(id); return this.production.video(request, id); }
+  @Post('videos/:id/reviews') reviewVideo(@Req() request: Request, @Param('id') id: string, @Body() body: unknown) { z.string().uuid().parse(id); return this.production.reviewVideo(request, id, body); }
+  @Post('videos/:id/render') render(@Req() request: Request, @Param('id') id: string, @Body() body: unknown) { z.string().uuid().parse(id); return this.production.renderVideo(request, id, body); }
+}
+
+@Controller('api/v1')
+class Phase5Controller {
+  constructor(@Inject(AUTOMATION) private readonly automation:AutomationService,@Inject(ANALYTICS) private readonly analytics:AnalyticsService) {}
+  @Get('automation') overview(@Req() r:Request) {return this.automation.overview(r);}
+  @Get('automation/accounts') accounts(@Req() r:Request) {return this.automation.accounts(r);}
+  @Get('automation/approvals') approvals(@Req() r:Request) {return this.automation.approvals(r);}
+  @Put('channels/:id/automation') rule(@Req() r:Request,@Param('id') id:string,@Body() b:unknown) {z.string().uuid().parse(id);return this.automation.saveRule(r,id,b);}
+  @Post('channels/:id/automation/control') control(@Req() r:Request,@Param('id') id:string,@Body() b:unknown) {z.string().uuid().parse(id);return this.automation.control(r,id,b);}
+  @Post('channels/:id/automation/run') run(@Req() r:Request,@Param('id') id:string,@Body() b:unknown) {z.string().uuid().parse(id);return this.automation.run(r,id,b);}
+  @Get('channels/:id/automation/schedule-preview') preview(@Req() r:Request,@Param('id') id:string) {z.string().uuid().parse(id);return this.automation.previewSchedule(r,id);}
+  @Get('automation/runs/:id') detail(@Req() r:Request,@Param('id') id:string) {z.string().uuid().parse(id);return this.automation.detail(r,id);}
+  @Post('automation/runs/:id/cancel') cancel(@Req() r:Request,@Param('id') id:string) {z.string().uuid().parse(id);return this.automation.cancel(r,id);}
+  @Post('automation/runs/:id/retry') retry(@Req() r:Request,@Param('id') id:string) {z.string().uuid().parse(id);return this.automation.retry(r,id);}
+  @Get('usage') usage(@Req() r:Request) {return this.automation.usage(r);}
+  @Get('budget-policy') budget(@Req() r:Request) {return this.automation.budget(r);}
+  @Put('budget-policy') saveBudget(@Req() r:Request,@Body() b:unknown) {return this.automation.saveBudget(r,b);}
+  @Get('analytics/overview') analyticsOverview(@Req() r:Request,@Query() q:unknown) {return this.analytics.overview(r,q);}
+  @Get('analytics/publications') publications(@Req() r:Request) {return this.analytics.publications(r);}
+  @Post('analytics/publications/:id/refresh') refresh(@Req() r:Request,@Param('id') id:string) {z.string().uuid().parse(id);return this.analytics.refresh(r,id);}
+  @Post('analytics/publications/:id/metrics') metrics(@Req() r:Request,@Param('id') id:string,@Body() b:unknown) {z.string().uuid().parse(id);return this.analytics.manual(r,id,b);}
+  @Get('analytics/publications/:id/history') metricHistory(@Req() r:Request,@Param('id') id:string) {z.string().uuid().parse(id);return this.analytics.history(r,id);}
+  @Get('analytics/sync-runs') syncRuns(@Req() r:Request) {return this.analytics.syncRuns(r);}
+  @Get('analytics/recommendations') recommendations(@Req() r:Request) {return this.analytics.recommendations(r);}
+  @Post('analytics/recommendations/refresh') refreshRecommendations(@Req() r:Request) {return this.analytics.refreshRecommendations(r);}
+  @Post('analytics/recommendations/:id/decision') decision(@Req() r:Request,@Param('id') id:string,@Body() b:unknown) {z.string().uuid().parse(id);return this.analytics.decideRecommendation(r,id,b);}
+  @Get('analytics/experiments') experiments(@Req() r:Request) {return this.analytics.experiments(r);}
+  @Post('analytics/experiments') experiment(@Req() r:Request,@Body() b:unknown) {return this.analytics.createExperiment(r,b);}
+  @Post('analytics/experiments/:id/approve') approveExperiment(@Req() r:Request,@Param('id') id:string) {z.string().uuid().parse(id);return this.analytics.approveExperiment(r,id);}
+  @Post('analytics/experiments/:id/assign') assign(@Req() r:Request,@Param('id') id:string,@Body() b:unknown) {z.string().uuid().parse(id);return this.analytics.assignExperiment(r,id,b);}
+}
+
 @Controller('api/v1')
 class HealthController {
   constructor(@Inject(DATABASE) private readonly database: PrismaClient) {}
   @Get('health') async health() {
     try { await this.database.$queryRaw`SELECT 1`; }
     catch { throw new ApiError(503, 'DATABASE_UNAVAILABLE', 'Database is unavailable.'); }
-    return { status: 'ok', database: 'ok', phase: 'PHASE_2', integrations: 'synthetic-demo-and-manual-only' };
+    return { status: 'ok', database: 'ok', phase: 'PHASE_3', integrations: 'discovery-and-local-media-no-publisher' };
   }
 }
 
@@ -112,11 +173,14 @@ class HealthController {
 class AppModule {}
 
 export async function createApp(database = new PrismaClient()) {
-  const config = z.object({ APP_URL: z.string().url().default('http://localhost:3000'), ALLOW_REGISTRATION: z.enum(['true', 'false']).default(process.env.NODE_ENV === 'production' ? 'false' : 'true'), SESSION_TTL_SECONDS: z.coerce.number().int().min(60).max(31536000).default(604800), AUTH_ATTEMPTS_PER_WINDOW: z.coerce.number().int().min(1).max(10000).default(30), IMPORT_MAX_BYTES: z.coerce.number().int().min(1024).max(10485760).default(262144) }).parse(process.env);
+  const config = z.object({ APP_URL: z.string().url().default('http://localhost:3000'), ALLOW_REGISTRATION: z.enum(['true', 'false']).default(process.env.NODE_ENV === 'production' ? 'false' : 'true'), SESSION_TTL_SECONDS: z.coerce.number().int().min(60).max(31536000).default(604800), AUTH_ATTEMPTS_PER_WINDOW: z.coerce.number().int().min(1).max(10000).default(30), IMPORT_MAX_BYTES: z.coerce.number().int().min(1024).max(10485760).default(262144), MEDIA_MAX_UPLOAD_BYTES: z.coerce.number().int().min(1024).max(52428800).default(20971520) }).parse(process.env);
   const auth = new AuthService(database);
   const content = new ContentService(database, auth);
   const discovery = new DiscoveryService(database, auth);
-  const app = await NestFactory.create({ module: AppModule, controllers: [IdentityController, ContentController, HealthController], providers: [{ provide: DATABASE, useValue: database }, { provide: AUTH, useValue: auth }, { provide: CONTENT, useValue: content }, { provide: DISCOVERY, useValue: discovery }, { provide: 'DATABASE_LIFECYCLE', useValue: { onApplicationShutdown: () => database.$disconnect() } }] }, { logger: false, bodyParser: false });
+  const production = new ProductionService(database, auth);
+  const automation=new AutomationService(database,auth);
+  const analytics=new AnalyticsService(database,auth);
+  const app = await NestFactory.create({ module: AppModule, controllers: [IdentityController, ContentController, ProductionController, Phase5Controller, HealthController], providers: [{ provide: DATABASE, useValue: database }, { provide: AUTH, useValue: auth }, { provide: CONTENT, useValue: content }, { provide: DISCOVERY, useValue: discovery }, { provide: PRODUCTION, useValue: production }, {provide:AUTOMATION,useValue:automation},{provide:ANALYTICS,useValue:analytics}, { provide: 'DATABASE_LIFECYCLE', useValue: { onApplicationShutdown: () => database.$disconnect() } }] }, { logger: false, bodyParser: false });
   app.use((request: ApiRequest, response: Response, next: NextFunction) => {
     request.requestId = randomUUID();
     response.setHeader('X-Request-ID', request.requestId);
@@ -127,10 +191,11 @@ export async function createApp(database = new PrismaClient()) {
     if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method) && origin && origin !== new URL(config.APP_URL).origin) return next(new ApiError(403, 'CSRF_REJECTED', 'The request origin is not allowed.'));
     next();
   });
+  app.use('/api/v1/backgrounds', express.raw({ type: 'image/*', limit: config.MEDIA_MAX_UPLOAD_BYTES }));
   app.use(express.json({ limit: config.IMPORT_MAX_BYTES, strict: true }));
   app.useGlobalFilters(new ErrorFilter());
   if (process.env.NODE_ENV !== 'production') {
-    const openapi = new DocumentBuilder().setTitle('Shorts Factory').setVersion('1.0.0').setDescription('Phase 2 content discovery API. Workspace context is derived from authenticated membership. Mutations require Idempotency-Key; publishing remains blocked.').addCookieAuth('sf_session').addBearerAuth().build();
+    const openapi = new DocumentBuilder().setTitle('Shorts Factory').setVersion('1.0.0').setDescription('Content discovery and Phase 3 media production API. Workspace context is derived from authenticated membership. Mutations require Idempotency-Key; publishing remains approval-gated.').addCookieAuth('sf_session').addBearerAuth().build();
     SwaggerModule.setup('api/docs', app, SwaggerModule.createDocument(app, openapi));
   }
   await app.init();

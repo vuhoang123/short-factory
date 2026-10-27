@@ -33,12 +33,15 @@ function useResource<T extends z.ZodTypeAny>(path: string, schema: T) {
 }
 
 const channelsListSchema = paginated(channelSchema);
+const topicRulesListSchema = paginated(topicRuleSchema);
 const sourcesListSchema = paginated(sourceSchema);
 const postsListSchema = paginated(postSchema);
 const commentsListSchema = paginated(commentSchema);
 const auditsListSchema = paginated(auditSchema);
 const membersListSchema = paginated(z.object({ userId: z.string(), email: z.string(), name: z.string().nullable(), role: roleSchema }));
 const importResultSchema = z.object({ postId: z.string(), deduplicated: z.boolean(), warnings: z.array(z.string()) });
+const syncRunsListSchema = paginated(syncRunSchema);
+const candidatesListSchema = paginated(candidateSchema);
 
 export function WorkspacePage({ view }: { view: View }) {
   const copy = pageCopy[view]; const { role } = useSession();
@@ -129,7 +132,7 @@ function Sources() {
 function csv(value: FormDataEntryValue | null): string[] { return String(value ?? '').split(',').map(term => term.trim()).filter(Boolean); }
 
 function SourceHistory({ sourceId }: { sourceId: string }) {
-  const resource = useResource(`/sources/${sourceId}/sync-runs?limit=20`, paginated(syncRunSchema));
+  const resource = useResource(`/sources/${sourceId}/sync-runs?limit=20`, syncRunsListSchema);
   return <div className="panel"><h3>Recent sync runs</h3>{resource.error && <ErrorNotice message={resource.error} retry={resource.reload} />}{resource.loading ? <p role="status" className="loading-state">Loading run history…</p> : resource.data?.items.length ? <div className="table-scroll"><table><thead><tr><th>Started</th><th>Status</th><th>New posts</th><th>Duplicates</th><th>Error</th></tr></thead><tbody>{resource.data.items.map(run => <tr key={run.id}><td>{new Date(run.startedAt).toLocaleString()}</td><td><StatusBadge value={run.status} /></td><td>{run.fetchedCount}</td><td>{run.duplicateCount}</td><td>{run.errorCode ?? '—'}</td></tr>)}</tbody></table></div> : <p className="muted">This source has no sync runs yet.</p>}</div>;
 }
 
@@ -165,7 +168,7 @@ function CandidateLibrary() {
   const [selectedId, setSelectedId] = useState(''); const [actionError, setActionError] = useState(''); const [busy, setBusy] = useState(false);
   const params = new URLSearchParams({ limit: '25', sort });
   if (query) params.set('q', query); if (platform) params.set('platform', platform); if (topic) params.set('topic', topic); if (minScore) params.set('minScore', minScore); if (cursor) params.set('cursor', cursor);
-  const resource = useResource(`/candidates?${params.toString()}`, paginated(candidateSchema));
+  const resource = useResource(`/candidates?${params.toString()}`, candidatesListSchema);
   const selected = resource.data?.items.find(candidate => candidate.id === selectedId) ?? null;
   function refresh() { resource.reload(); setSelectedId(''); }
   async function review(candidateId: string, decision: 'APPROVED' | 'REJECTED') {
@@ -281,7 +284,7 @@ function Settings() {
 }
 
 function TopicRules() {
-  const { role } = useSession(); const rules = useResource('/topic-rules?limit=100', paginated(topicRuleSchema)); const channels = useResource('/channels?limit=100', channelsListSchema);
+  const { role } = useSession(); const rules = useResource('/topic-rules?limit=100', topicRulesListSchema); const channels = useResource('/channels?limit=100', channelsListSchema);
   const [editingId, setEditingId] = useState(''); const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); const form = new FormData(event.currentTarget); setError(''); setBusy(true);

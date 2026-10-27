@@ -21,6 +21,9 @@ const navigation = [
   { path: '/sources', label: 'Sources', mark: '↗' },
   { path: '/library/posts', label: 'Post library', mark: '▧' },
   { path: '/reviews', label: 'Rights reviews', mark: '✓' },
+  { path: '/studio', label: 'Story studio', mark: '▶' },
+  { path: '/autopilot', label: 'Content autopilot', mark: '⇄' },
+  { path: '/analytics', label: 'Analytics', mark: '↗' },
   { path: '/settings', label: 'Workspace settings', mark: '⚙' },
 ];
 
