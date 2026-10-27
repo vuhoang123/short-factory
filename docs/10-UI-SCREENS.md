@@ -10,6 +10,7 @@
 - `/accounts` official OAuth connection, scope/capability indicators, disconnect, privacy controls.
 - `/autopilot` channel rule editor and version, manual/run-once/daily/weekly modes, time zone/posting windows, candidate freshness and ranking, target accounts, budget estimates, run history, stage errors, dry run, pause/resume/disable/emergency stop and reviewer queue. Full automatic mode shows its authorization and QC blockers.
 - `/analytics` metric availability and freshness, platform-specific scopes, publication history, content cohorts, recommendation evidence, human decisions, and paused experiment drafts/assignments. Missing provider data stays visibly unavailable instead of being plotted as zero.
+- `/guide` Vietnamese step-by-step workflow with direct links to channels, discovery rules, permitted imports, rights/candidate review and video production; explicitly identifies synthetic fixtures and unshipped provider integrations.
 - `/settings` workspace members, channel topic rules and minimum scores, policy, audit and takedown.
 
 Accessibility: keyboard operation, loading/empty/error states, accessible modal labels, small mobile-friendly navigation. Use clear simulated-data labels in dev.

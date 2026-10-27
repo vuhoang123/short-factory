@@ -16,6 +16,7 @@ export function useSession() {
 }
 
 const navigation = [
+  { path: '/guide', label: 'Hướng dẫn sử dụng', mark: '?' },
   { path: '/dashboard', label: 'Overview', mark: '▦' },
   { path: '/channels', label: 'Content channels', mark: '▤' },
   { path: '/sources', label: 'Sources', mark: '↗' },
@@ -83,7 +84,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div className="workspace-main"><header className="topbar"><span>Editorial workspace</span><span className="topbar-mode"><span className="status-dot" aria-hidden="true" />Manual import enabled</span><button className="text-button mobile-signout" onClick={() => void logout()}>Sign out</button></header>
         <main id="main-content" className="page-content" key={session.activeWorkspaceId ?? 'unselected'}>
           {error && <ErrorNotice message={error} />}
-          {workspace ? children : <section className="welcome-panel"><span className="eyebrow">LET’S GET STARTED</span><h1>Create your workspace</h1><p className="muted">Keep your channels, source material and rights reviews together. You will be its owner.</p><WorkspaceForm onCreated={refresh} /></section>}
+          {workspace || pathname === '/guide' ? children : <section className="welcome-panel"><span className="eyebrow">LET’S GET STARTED</span><h1>Create your workspace</h1><p className="muted">Keep your channels, source material and rights reviews together. You will be its owner.</p><WorkspaceForm onCreated={refresh} /></section>}
         </main>
       </div>
     </div>
