@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { Prisma, type PrismaClient } from '@shorts-factory/database';
 import { hashPostContent, normalizeText, redactPersonalData } from '@shorts-factory/shared';
-import { captureInputSchema, capturedPostSchema, localCaptureCall, detectSensitiveFlags } from '@shorts-factory/sources';
+import { captureInputSchema, capturedPostSchema, captureUploadMetadataSchema, currentBrowserResultSchema, localCaptureCall, detectSensitiveFlags } from '@shorts-factory/sources';
 import { LocalObjectStore, prepareSourceImage } from '@shorts-factory/media';
 
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -37,7 +37,7 @@ export async function processLocalCapture(db: PrismaClient, workspaceId: string,
   const store = new LocalObjectStore(path.resolve(process.env.STORAGE_LOCAL_ROOT ?? '.data/objects'));
   const stagedObjects = new Map<string, string>();
   try {
-    const post = capturedPostSchema.parse(await (await localCaptureCall('capture', { ...scope, url: run.input.url })).json());
+    const post = run.input.browser === 'CURRENT' ? currentBrowserResultSchema.parse(run.output).post : capturedPostSchema.parse(await (await localCaptureCall('capture', { ...scope, url: run.input.url })).json());
     if (!post.source_image_id) throw new Error('SOURCE_POST_IMAGE_MISSING');
     if (lost) throw new Error('CAPTURE_LEASE_LOST');
     const entries = [{ text: post.text, author: post.author, source_image_id: post.source_image_id, anonymous_image_id: post.anonymous_image_id }, ...post.comments];
@@ -48,9 +48,18 @@ export async function processLocalCapture(db: PrismaClient, workspaceId: string,
       const externalId = index === 0 ? null : digest(`${entry.author}\n${normalizeText(entry.text)}`);
       for (const [variant, imageId] of [['ORIGINAL', entry.source_image_id], ['ANONYMIZED', entry.anonymous_image_id]] as const) {
         if (!imageId) continue;
-        const response = await localCaptureCall('image', { ...scope, imageId }, 15_000);
-        if (Number(response.headers.get('content-length')) > 20 * 1024 * 1024) throw new Error('SOURCE_IMAGE_SIZE_INVALID');
-        const image = await prepareSourceImage(new Uint8Array(await response.arrayBuffer()), digest(`${id}:${externalId}:${variant}`));
+        let bytes: Uint8Array;
+        if (run.input.browser === 'CURRENT') {
+          const asset = await db.mediaAsset.findFirst({ where: { workspaceId, kind: 'SOURCE_CAPTURE_UPLOAD', metadata: { path: ['captureRunId'], equals: id }, AND: [{ metadata: { path: ['imageId'], equals: imageId } }] } });
+          const metadata = captureUploadMetadataSchema.safeParse(asset?.metadata);
+          if (!asset || !metadata.success || metadata.data.ownerUserId !== scope.userId) throw new Error('SOURCE_IMAGE_MISSING');
+          bytes = await store.get(workspaceId, asset.checksum);
+        } else {
+          const response = await localCaptureCall('image', { ...scope, imageId }, 15_000);
+          if (Number(response.headers.get('content-length')) > 20 * 1024 * 1024) throw new Error('SOURCE_IMAGE_SIZE_INVALID');
+          bytes = new Uint8Array(await response.arrayBuffer());
+        }
+        const image = await prepareSourceImage(bytes, digest(`${id}:${externalId}:${variant}`));
         const object = await store.put(workspaceId, image.bytes);
         stagedObjects.set(object.checksum, object.storageKey);
         prepared.push({ ...object, width: image.width, height: image.height, variant, externalId, textHash: digest(clean(entry.text)) });
@@ -105,11 +114,36 @@ export async function processLocalCapture(db: PrismaClient, workspaceId: string,
 
 /** PostgreSQL recovers both lost queue delivery and expired worker leases. */
 export async function recoverLocalCaptures(db: PrismaClient) {
+  const expired = await db.workflowRun.findMany({ where: { entityType: 'LOCAL_CAPTURE', status: 'WAITING_BROWSER', nextRunAt: { lte: new Date() } }, take: 25 });
+  for (const run of expired) await db.$transaction(async tx => {
+    const changed = await tx.workflowRun.updateMany({ where: { id: run.id, workspaceId: run.workspaceId, version: run.version, status: 'WAITING_BROWSER' }, data: { status: 'FAILED', errorCode: 'CAPTURE_BROWSER_TIMEOUT', version: { increment: 1 }, output: Prisma.DbNull } });
+    if (changed.count) await tx.outboxEvent.create({ data: { workspaceId: run.workspaceId, aggregateId: run.id, eventType: 'LOCAL_CAPTURE_PURGE_REQUESTED', payload: { workspaceId: run.workspaceId, userId: captureInputSchema.parse(run.input).requestedById, jobId: run.id } } });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   const cutoff = new Date(Date.now() - 30_000);
   const runs = await db.workflowRun.findMany({ where: { entityType: 'LOCAL_CAPTURE', status: { in: ['QUEUED', 'RUNNING'] }, updatedAt: { lt: cutoff }, OR: [{ leaseUntil: null }, { leaseUntil: { lt: new Date() } }] }, take: 25 });
   for (const run of runs) await db.$transaction(async tx => {
     const changed = await tx.workflowRun.updateMany({ where: { id: run.id, workspaceId: run.workspaceId, version: run.version, status: run.status, leaseUntil: run.leaseUntil, updatedAt: run.updatedAt }, data: { status: run.attempts >= 3 ? 'FAILED' : 'QUEUED', version: { increment: 1 }, leaseUntil: null, ...(run.attempts >= 3 ? { errorCode: 'CAPTURE_RECOVERY_EXHAUSTED' } : {}) } });
     if (changed.count && run.attempts < 3) await tx.outboxEvent.create({ data: { workspaceId: run.workspaceId, aggregateId: run.id, eventType: 'BROWSER_CAPTURE_REQUESTED', payload: { version: run.version + 1 } } });
     if (changed.count && run.attempts >= 3) await tx.outboxEvent.create({ data: { workspaceId: run.workspaceId, aggregateId: run.id, eventType: 'LOCAL_CAPTURE_PURGE_REQUESTED', payload: { workspaceId: run.workspaceId, userId: captureInputSchema.parse(run.input).requestedById, jobId: run.id } } });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+}
+
+export async function purgeCurrentBrowserCapture(db: PrismaClient, workspaceId: string, userId: string, id: string): Promise<boolean> {
+  return db.$transaction(async tx => {
+    const run = await tx.workflowRun.findFirst({ where: { id, workspaceId, entityType: 'LOCAL_CAPTURE' } });
+    if (!run) return true;
+    const removed = run.status === 'TAKEN_DOWN' && !run.input;
+    const input = removed ? null : captureInputSchema.parse(run.input);
+    if (input && input.browser !== 'CURRENT') return false;
+    if (input && input.requestedById !== userId || ['WAITING_BROWSER', 'QUEUED', 'RUNNING'].includes(run.status)) throw new Error('CAPTURE_PURGE_NOT_READY');
+    const assets = await tx.mediaAsset.findMany({ where: { workspaceId, kind: 'SOURCE_CAPTURE_UPLOAD', metadata: { path: ['captureRunId'], equals: id } } });
+    for (const asset of assets) {
+      if (captureUploadMetadataSchema.parse(asset.metadata).ownerUserId !== userId) throw new Error('CAPTURE_PURGE_NOT_AUTHORIZED');
+      await tx.outboxEvent.create({ data: { workspaceId, aggregateId: asset.id, eventType: 'MEDIA_ASSET_DELETE_REQUESTED', payload: { workspaceId, entityId: asset.id, checksum: asset.checksum, storageKey: asset.storageKey } } });
+      await tx.mediaAsset.delete({ where: { workspaceId_id: { workspaceId, id: asset.id } } });
+    }
+    if (run.status !== 'SUCCEEDED') await tx.workflowRun.updateMany({ where: { id, workspaceId, version: run.version }, data: { output: Prisma.DbNull } });
+    // Takedown erases the input mode; also purge the scoped private cache in that case.
+    return !removed;
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }

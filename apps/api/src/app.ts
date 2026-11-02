@@ -99,6 +99,8 @@ class ContentController {
   @Post('source-captures') createCapture(@Req() request: Request, @Body() body: unknown) { return this.content.createCapture(request, body); }
   @Get('source-captures/:id') capture(@Req() request: Request, @Param('id') id: string) { z.string().uuid().parse(id); return this.content.capture(request, id); }
   @Post('source-captures/:id/cancel') cancelCapture(@Req() request: Request, @Param('id') id: string) { z.string().uuid().parse(id); return this.content.cancelCapture(request, id); }
+  @Post('source-captures/:id/images/:imageId') captureImage(@Req() request: Request, @Param('id') id: string, @Param('imageId') imageId: string) { z.string().uuid().parse(id); return this.content.uploadCaptureImage(request, id, imageId, request.body); }
+  @Post('source-captures/:id/result') captureResult(@Req() request: Request, @Param('id') id: string, @Body() body: unknown) { z.string().uuid().parse(id); return this.content.completeBrowserCapture(request, id, body); }
   @Get('posts/:id/source-images') sourceImages(@Req() request: Request, @Param('id') id: string) { z.string().uuid().parse(id); return this.content.sourceImages(request, id); }
   @Get('posts') posts(@Req() request: Request, @Query() query: unknown) { return this.content.posts(request, query); }
   @Get('posts/:id') post(@Req() request: Request, @Param('id') id: string) { z.string().uuid().parse(id); return this.content.post(request, id); }
@@ -214,6 +216,7 @@ export async function createApp(database = new PrismaClient()) {
   });
   app.use('/api/v1/backgrounds', express.raw({ type: 'image/*', limit: config.MEDIA_MAX_UPLOAD_BYTES }));
   app.use('/api/v1/voice-profiles', express.raw({ type: ['audio/wav', 'audio/x-wav'], limit: 3000000 }));
+  app.use('/api/v1/source-captures/:id/images/:imageId', express.raw({ type: 'image/png', limit: config.MEDIA_MAX_UPLOAD_BYTES }));
   app.use(express.json({ limit: config.IMPORT_MAX_BYTES, strict: true }));
   app.useGlobalFilters(new ErrorFilter());
   if (process.env.NODE_ENV !== 'production') {

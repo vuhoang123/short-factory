@@ -107,4 +107,6 @@ Working tree còn có các files local-export baseline chưa commit từ lượt
 Sau verification đã restart `local:export` với code mới. Web `/health`, `/export` và API `/health` trả 200; unauthenticated history trả 401. Web/API/discovery/media worker đang hoạt động tại loopback local, giữ nguyên dữ liệu. Route `/export` yêu cầu đăng nhập trước khi sử dụng.
 # Follow-up: local source screenshots
 
+The current browser button follow-up is recorded in [CURRENT_BROWSER_CAPTURE_REPORT](product/CURRENT_BROWSER_CAPTURE_REPORT.md): Chrome/Edge extension capture is the default, and dedicated Chromium login is optional. It adds a durable waiting/upload boundary rather than reusing or extracting browser cookies.
+
 The owner-requested dedicated-browser capture and original-image video flow are recorded in [SOURCE_CAPTURE_REPORT](product/SOURCE_CAPTURE_REPORT.md), with pinned [open-source research](research/VIDEO_READER_REFERENCES.md). This adds capture-job cancellation/recovery, source-image authorization/takedown and real screenshot rendering. It does not change the Phase 4 publishing approval gates.

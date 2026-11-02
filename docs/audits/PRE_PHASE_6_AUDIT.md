@@ -1,5 +1,7 @@
 # PRE-PHASE 6 — Báo cáo audit toàn dự án
 
+> Cập nhật nút mở/chụp ngày 02/11/2026: [Chrome/Edge hiện tại qua extension](../product/CURRENT_BROWSER_CAPTURE_REPORT.md) là mặc định; cửa sổ Chromium riêng là tùy chọn phụ. Không sao chép cookie hoặc bật cổng debug của trình duyệt.
+
 > Cập nhật sau Milestone 2: [ảnh nguồn thật và bộ đọc video](../product/SOURCE_CAPTURE_REPORT.md), [repo tham khảo và quyết định áp dụng](../research/VIDEO_READER_REFERENCES.md). Profile trình duyệt do người dùng mở riêng ở local; không thay đổi trạng thái BLOCKED_EXTERNAL của publishing.
 
 > Cập nhật chất lượng audio và thời lượng sau snapshot: [Milestone 2](../product/MILESTONE_2_REPORT.md). Bài Facebook người dùng cung cấp chưa được render vì người dùng xác nhận chưa có quyền sử dụng; kiểm chứng media dùng dữ liệu thử tự tạo.

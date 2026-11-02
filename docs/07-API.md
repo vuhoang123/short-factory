@@ -119,6 +119,8 @@ Even if `workspaceId` is present, reject if caller lacks membership. Validate UR
 Validate approved render and rights, capability, consent and title; transactionally persist publication + outbox, return 202 with IDs/status. Remote posting occurs asynchronously.
 # Local source screenshot capture
 
+Current-browser input: `POST /source-captures` additionally accepts optional `browser:"CURRENT"` and creates `WAITING_BROWSER`, with no browser launch or queue event until submission. `POST /source-captures/:id/images/:imageId` accepts a raw `image/png` body (ID: 32 lowercase hex); `POST /source-captures/:id/result` accepts `{post:<captured source>}` and atomically freezes the snapshot, moves to QUEUED and emits `BROWSER_CAPTURE_REQUESTED`. Both require the requesting editor's current session, active workspace and idempotency key. Image count ≤62, each input ≤20 MB, total staged bytes ≤128 MiB. Waiting expires after 30 minutes. Queued transient source data and staged images are not exposed by status/media reads. Cancellation, expiry and post-takedown cleanup delete inbox assets through the existing media deletion outbox.
+
 The following routes require a session in the active workspace. Mutation roles: OWNER/ADMIN/EDITOR; capture job status and cancellation additionally require the requesting user. All request bodies use strict Zod boundaries. Create/cancel use `Idempotency-Key` and PostgreSQL transactions; create enqueues `BROWSER_CAPTURE_REQUESTED` through the durable outbox.
 
 - `POST /api/v1/source-captures/browser` `{url}`: opens a dedicated visible browser for manual login. No password/cookie payload is accepted.

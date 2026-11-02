@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
+import path from 'node:path';
 import type { Request } from 'express';
 import { Prisma, type ContentRight, type PrismaClient } from '@shorts-factory/database';
 import { evaluateRights, hashPostContent, normalizeText, redactPersonalData } from '@shorts-factory/shared';
-import { captureInputSchema, captureRequestSchema, captureUrlSchema, localCaptureCall, detectSensitiveFlags } from '@shorts-factory/sources';
-import { selectTopComments } from '@shorts-factory/media';
+import { capturedImageIds, captureInputSchema, captureRequestSchema, captureUrlSchema, captureUploadMetadataSchema, currentBrowserResultSchema, localCaptureCall, detectSensitiveFlags } from '@shorts-factory/sources';
+import { LocalObjectStore, prepareSourceImage, selectTopComments } from '@shorts-factory/media';
 import { z } from 'zod';
 import { AuthService, adminRoles, editRoles, reviewRoles, type AuthContext } from './auth/auth.service.js';
 import { ApiError, notFound } from './errors.js';
@@ -40,13 +41,14 @@ export class ContentService {
     if (process.env.NODE_ENV === 'production' || process.env.LOCAL_CAPTURE_ENABLED !== '1') throw new ApiError(409, 'LOCAL_CAPTURE_DISABLED', 'Chạy pnpm local:capture:setup rồi khởi động lại pnpm local:export.');
     return this.mutation(request, context, '/source-captures', input, async tx => {
       if (!await tx.contentChannel.findFirst({ where: { id: input.channelId, workspaceId: context.workspaceId } })) return notFound();
-      const active = await tx.workflowRun.count({ where: { workspaceId: context.workspaceId, entityType: 'LOCAL_CAPTURE', status: { in: ['QUEUED', 'RUNNING'] }, input: { path: ['requestedById'], equals: context.userId } } });
+      const active = await tx.workflowRun.count({ where: { workspaceId: context.workspaceId, entityType: 'LOCAL_CAPTURE', status: { in: ['WAITING_BROWSER', 'QUEUED', 'RUNNING'] }, input: { path: ['requestedById'], equals: context.userId } } });
       if (active) throw new ApiError(409, 'CAPTURE_ALREADY_RUNNING', 'Đợi hoặc hủy lượt chụp hiện tại trước.');
       const id = randomUUID();
-      await tx.workflowRun.create({ data: { id, workspaceId: context.workspaceId, entityType: 'LOCAL_CAPTURE', entityId: id, status: 'QUEUED', input: { ...input, requestedById: context.userId } } });
-      await this.event(tx, context, 'BROWSER_CAPTURE_REQUESTED', id);
+      const status = input.browser === 'CURRENT' ? 'WAITING_BROWSER' : 'QUEUED';
+      await tx.workflowRun.create({ data: { id, workspaceId: context.workspaceId, entityType: 'LOCAL_CAPTURE', entityId: id, status, nextRunAt: input.browser === 'CURRENT' ? new Date(Date.now() + 30 * 60_000) : null, input: { ...input, requestedById: context.userId } } });
+      if (status === 'QUEUED') await this.event(tx, context, 'BROWSER_CAPTURE_REQUESTED', id);
       await this.audit(tx, context, 'LOCAL_CAPTURE_REQUESTED', 'WorkflowRun', id);
-      return { id, status: 'QUEUED' };
+      return { id, status };
     });
   }
 
@@ -54,7 +56,7 @@ export class ContentService {
     const context = await this.auth.context(request);
     const run = await this.db.workflowRun.findFirst({ where: { id, workspaceId: context.workspaceId, entityType: 'LOCAL_CAPTURE' } });
     if (!run || run.status === 'TAKEN_DOWN' || captureInputSchema.parse(run.input).requestedById !== context.userId) return notFound();
-    return { id: run.id, status: run.status, errorCode: run.errorCode, output: run.output };
+    return { id: run.id, status: run.status, errorCode: run.errorCode, output: run.status === 'SUCCEEDED' ? run.output : null };
   }
 
   async cancelCapture(request: Request, id: string) {
@@ -62,11 +64,11 @@ export class ContentService {
     const result = await this.mutation(request, context, `/source-captures/${id}/cancel`, {}, async tx => {
       const run = await tx.workflowRun.findFirst({ where: { id, workspaceId: context.workspaceId, entityType: 'LOCAL_CAPTURE' } });
       if (!run || run.status === 'TAKEN_DOWN' || captureInputSchema.parse(run.input).requestedById !== context.userId) return notFound();
-      if (['QUEUED', 'RUNNING'].includes(run.status)) {
+      if (['WAITING_BROWSER', 'QUEUED', 'RUNNING'].includes(run.status)) {
         await tx.workflowRun.updateMany({ where: { id, workspaceId: context.workspaceId, version: run.version }, data: { status: 'CANCELLED', leaseUntil: null, version: { increment: 1 } } });
         await tx.outboxEvent.create({ data: { workspaceId: context.workspaceId, aggregateId: id, eventType: 'LOCAL_CAPTURE_PURGE_REQUESTED', payload: { workspaceId: context.workspaceId, userId: context.userId, jobId: id } } });
       }
-      return { id, status: ['QUEUED', 'RUNNING'].includes(run.status) ? 'CANCELLED' : run.status };
+      return { id, status: ['WAITING_BROWSER', 'QUEUED', 'RUNNING'].includes(run.status) ? 'CANCELLED' : run.status };
     });
     if (result && typeof result === 'object' && !Array.isArray(result) && result.status === 'CANCELLED') await localCaptureCall('cancel', { workspaceId: context.workspaceId, userId: context.userId, jobId: id }, 5000).catch(() => undefined);
     return result;
@@ -77,6 +79,68 @@ export class ContentService {
     if (!await this.db.sourcePost.findFirst({ where: { id, workspaceId: context.workspaceId, deletedAt: null } })) return notFound();
     const assets = await this.db.mediaAsset.findMany({ where: { workspaceId: context.workspaceId, kind: 'SOURCE_CAPTURE', metadata: { path: ['postId'], equals: id } }, select: { id: true, metadata: true } });
     return { items: assets };
+  }
+
+  private async waitingBrowser(tx: Prisma.TransactionClient, context: AuthContext, id: string) {
+    if (process.env.NODE_ENV === 'production' || process.env.LOCAL_CAPTURE_ENABLED !== '1') throw new ApiError(409, 'LOCAL_CAPTURE_DISABLED', 'Current-browser capture is available only in local mode.');
+    const run = await tx.workflowRun.findFirst({ where: { id, workspaceId: context.workspaceId, entityType: 'LOCAL_CAPTURE' } });
+    if (!run || run.status === 'TAKEN_DOWN') return notFound();
+    const input = captureInputSchema.parse(run.input);
+    if (input.requestedById !== context.userId || input.browser !== 'CURRENT') return notFound();
+    if (run.status !== 'WAITING_BROWSER' || !run.nextRunAt || run.nextRunAt <= new Date()) throw new ApiError(409, 'CAPTURE_NOT_WAITING', 'Lượt chụp đã đóng hoặc hết hạn. Tạo lượt mới trong Studio.');
+    return { run, input };
+  }
+
+  async uploadCaptureImage(request: Request, id: string, imageId: string, raw: unknown) {
+    const context = await this.auth.context(request, editRoles);
+    z.string().regex(/^[a-f0-9]{32}$/).parse(imageId);
+    if (!Buffer.isBuffer(raw)) throw new ApiError(400, 'SOURCE_IMAGE_FORMAT_INVALID', 'Send a PNG image.');
+    await this.db.$transaction(tx => this.waitingBrowser(tx, context, id));
+    const image = await prepareSourceImage(raw, `${id}:${imageId}`);
+    const store = new LocalObjectStore(path.resolve(process.env.STORAGE_LOCAL_ROOT ?? '.data/objects'));
+    const object = await store.put(context.workspaceId, image.bytes);
+    try {
+      return await this.mutation(request, context, `/source-captures/${id}/images/${imageId}`, { checksum: object.checksum }, async tx => {
+        const { run } = await this.waitingBrowser(tx, context, id);
+        const uploads = await tx.mediaAsset.findMany({ where: { workspaceId: context.workspaceId, kind: 'SOURCE_CAPTURE_UPLOAD', metadata: { path: ['captureRunId'], equals: id } } });
+        const old = uploads.find(asset => captureUploadMetadataSchema.parse(asset.metadata).imageId === imageId);
+        if (old && old.checksum !== object.checksum) throw new ApiError(409, 'CAPTURE_IMAGE_CONFLICT', 'This screenshot ID is already frozen with different pixels.');
+        if (!old) {
+          if (uploads.length >= 62 || uploads.reduce((total, asset) => total + captureUploadMetadataSchema.parse(asset.metadata).sizeBytes, 0) + image.bytes.byteLength > 128 * 1024 * 1024) throw new ApiError(413, 'CAPTURE_UPLOAD_LIMIT', 'Lượt chụp vượt giới hạn ảnh. Giảm số bình luận hoặc độ dài bài.');
+          await tx.mediaAsset.create({ data: { workspaceId: context.workspaceId, kind: 'SOURCE_CAPTURE_UPLOAD', mimeType: 'image/png', checksum: object.checksum, storageKey: object.storageKey, metadata: { captureRunId: id, imageId, ownerUserId: context.userId, sizeBytes: image.bytes.byteLength } } });
+        }
+        await tx.workflowRun.updateMany({ where: { id, workspaceId: context.workspaceId, version: run.version, status: 'WAITING_BROWSER' }, data: { version: { increment: 1 } } });
+        return { id, imageId, stored: true };
+      });
+    } catch (error) {
+      await this.db.$transaction(async tx => {
+        if (!await tx.mediaAsset.findFirst({ where: { workspaceId: context.workspaceId, storageKey: object.storageKey }, select: { id: true } })) {
+          const entityId = randomUUID();
+          await tx.outboxEvent.create({ data: { workspaceId: context.workspaceId, aggregateId: entityId, eventType: 'MEDIA_ASSET_DELETE_REQUESTED', payload: { entityId, workspaceId: context.workspaceId, storageKey: object.storageKey, checksum: object.checksum } } });
+        }
+      });
+      throw error;
+    }
+  }
+
+  async completeBrowserCapture(request: Request, id: string, raw: unknown) {
+    const context = await this.auth.context(request, editRoles);
+    const snapshot = currentBrowserResultSchema.parse(raw);
+    return this.mutation(request, context, `/source-captures/${id}/result`, snapshot, async tx => {
+      const { run, input } = await this.waitingBrowser(tx, context, id);
+      // The extension resolves share redirects; it must submit the originally requested link.
+      if (snapshot.post.url !== input.url || snapshot.post.platform !== (new URL(input.url).hostname.endsWith('facebook.com') ? 'facebook' : 'threads')) throw new ApiError(400, 'CAPTURE_SOURCE_MISMATCH', 'The captured post does not match the requested source.');
+      const imageIds = capturedImageIds(snapshot.post);
+      if (!snapshot.post.source_image_id || new Set(imageIds).size !== imageIds.length) throw new ApiError(400, 'SOURCE_IMAGE_IDENTITY_CONFLICT', 'Every screenshot variant must have a distinct ID, including the post image.');
+      const assets = await tx.mediaAsset.findMany({ where: { workspaceId: context.workspaceId, kind: 'SOURCE_CAPTURE_UPLOAD', metadata: { path: ['captureRunId'], equals: id } } });
+      const uploaded = new Set(assets.map(asset => { const metadata = captureUploadMetadataSchema.parse(asset.metadata); if (metadata.ownerUserId !== context.userId) throw new ApiError(403, 'FORBIDDEN', 'Capture owner mismatch.'); return metadata.imageId; }));
+      if (imageIds.some(imageId => !uploaded.has(imageId))) throw new ApiError(409, 'SOURCE_IMAGE_MISSING', 'Một ảnh chưa tải xong. Giữ tab Studio mở rồi thử gửi lại từ extension.');
+      const changed = await tx.workflowRun.updateMany({ where: { id, workspaceId: context.workspaceId, version: run.version, status: 'WAITING_BROWSER' }, data: { status: 'QUEUED', version: { increment: 1 }, nextRunAt: null, output: snapshot as unknown as Prisma.InputJsonObject } });
+      if (!changed.count) throw new ApiError(409, 'CONCURRENT_CHANGE', 'Capture changed. Retry the same request.');
+      await this.event(tx, context, 'BROWSER_CAPTURE_REQUESTED', id);
+      await this.audit(tx, context, 'CURRENT_BROWSER_CAPTURE_RECEIVED', 'WorkflowRun', id, { imageCount: imageIds.length, commentCount: snapshot.post.comments.length });
+      return { id, status: 'QUEUED' };
+    });
   }
 
   private async mutation(request: Request, context: AuthContext, route: string, input: unknown, work: (tx: Prisma.TransactionClient) => Promise<Prisma.InputJsonObject>) {

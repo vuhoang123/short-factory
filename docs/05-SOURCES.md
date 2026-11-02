@@ -6,6 +6,8 @@ Use official, approved APIs or permissioned content feeds. Manual import accepts
 Owner-approved local exception (2026-11-02): a user may explicitly open a dedicated visible browser, log in themselves, and request a bounded capture of one Facebook/Threads post and its loaded comments. This adapter is disabled in production, never reads a normal browser profile or extracts its cookies, and does not bypass login, platform limits or group access controls. Store source screenshots with provenance and variants; default rights UNKNOWN/PENDING until explicit review. This does not enable unattended discovery or publishing. See [local capture](16-LOCAL-EXPORT.md) and [source evaluation](research/VIDEO_READER_REFERENCES.md).
 
 ## Source priorities
+Current-browser update (2026-11-02): the default local flow opens the source in the user's existing Chrome/Edge via an explicitly installed extension. The user clicks the extension on that exact source tab to initiate screenshot capture; there is no cookie/profile extraction, browser relaunch or remote debugging port. The extension temporarily attaches the debugger API to the selected tab, restores its viewport and detaches afterwards. Dedicated-browser capture remains optional. Rights, access controls and production/publishing gates are unchanged.
+
 1. `manual` paste/JSON/CSV: supported fully in MVP; provenance/rights attestation required.
 2. `threads`: scoped approved Meta keyword search where app permission and API capability exist. Do not promise full historical/search/comment coverage; gate by capability.
 3. `reddit`: access only after API/data-use authorization appropriate to commercial use; obey current data retention/deletion terms.

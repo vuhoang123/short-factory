@@ -17,4 +17,5 @@ run(python, ['-m', 'playwright', 'install', 'chromium']);
 const files = readdirSync(path.join(engine, 'app'), { recursive: true }).filter(f => typeof f === 'string' && f.endsWith('.py')).sort();
 const hashes = Object.fromEntries(files.map(f => [f.replaceAll('\\', '/'), createHash('sha256').update(readFileSync(path.join(engine, 'app', f))).digest('hex')]));
 writeFileSync(path.join(data, 'engine.json'), JSON.stringify({ engine, hashes }, null, 2), { mode: 0o600 });
+run(python, [path.join(root, 'scripts', 'build-capture-extension.py')]);
 console.log('Capture installed. The engine stays in its own checkout; profiles and images stay in this project. Run pnpm local:export.');

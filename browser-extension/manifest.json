@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Shorts Factory — Chụp bài gốc",
+  "version": "1.0.0",
+  "description": "Chụp bài/bình luận trong tab bạn chọn và gửi về Shorts Factory local. Không đọc cookie hay mật khẩu.",
+  "permissions": ["activeTab", "debugger", "storage", "webNavigation"],
+  "host_permissions": ["http://127.0.0.1:3000/*", "http://localhost:3000/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_title": "Chụp bài về Shorts Factory", "default_popup": "popup.html" },
+  "content_scripts": [{ "matches": ["http://127.0.0.1:3000/*", "http://localhost:3000/*"], "js": ["bridge.js"], "run_at": "document_start" }]
+}

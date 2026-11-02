@@ -9,7 +9,7 @@ export const captureUrlSchema = z.string().trim().url().max(2048).superRefine((v
     ctx.addIssue({ code: 'custom', message: 'Cần link bài Facebook hoặc Threads cụ thể qua HTTPS.' });
   }
 }).transform(value => { const url = new URL(value); url.hash = ''; if (!url.pathname.endsWith('.php')) url.search = ''; return url.toString(); });
-export const captureRequestSchema = z.object({ url: captureUrlSchema, channelId: z.string().uuid() }).strict();
+export const captureRequestSchema = z.object({ url: captureUrlSchema, channelId: z.string().uuid(), browser: z.literal('CURRENT').optional() }).strict();
 export const captureInputSchema = captureRequestSchema.extend({ requestedById: z.string().uuid() });
 const images = { source_image_id: z.string().regex(/^[a-f0-9]{32}$/).nullable().optional(), anonymous_image_id: z.string().regex(/^[a-f0-9]{32}$/).nullable().optional() };
 export const capturedPostSchema = z.object({
@@ -17,6 +17,12 @@ export const capturedPostSchema = z.object({
   comments: z.array(z.object({ text: z.string().min(1).max(2000), author: z.string().max(100), reaction_count: z.number().int().min(0).max(1e12).nullable().optional(), ...images })).max(30),
   warnings: z.array(z.string().max(2000)).max(100), comment_pool_size: z.number().int().nonnegative(),
 });
+export const currentBrowserResultSchema = z.object({ post: capturedPostSchema }).strict();
+export const captureUploadMetadataSchema = z.object({ captureRunId: z.string().uuid(), imageId: z.string().regex(/^[a-f0-9]{32}$/), ownerUserId: z.string().uuid(), sizeBytes: z.number().int().positive() }).strict();
+
+export function capturedImageIds(post: z.infer<typeof capturedPostSchema>): string[] {
+  return [post, ...post.comments].flatMap(entry => [entry.source_image_id, entry.anonymous_image_id]).filter((id): id is string => Boolean(id));
+}
 
 /** Dedicated, user-opened profile only. Normal browser profiles/cookies are never read. */
 export async function localCaptureCall(action: 'open' | 'capture' | 'image' | 'purge' | 'cancel', input: Record<string, string>, timeoutMs = 240_000): Promise<Response> {

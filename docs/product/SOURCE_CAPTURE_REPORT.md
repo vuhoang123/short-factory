@@ -1,5 +1,7 @@
 # Original post/comment screenshots — local delivery report
 
+Current-browser follow-up: [CURRENT_BROWSER_CAPTURE_REPORT.md](CURRENT_BROWSER_CAPTURE_REPORT.md) supersedes the default dedicated-window UX below. The source-image renderer remains unchanged; Chrome/Edge users can reuse their existing login through an explicitly installed extension.
+
 Date: 2026-11-02. User correction: videos must show actual source screenshots rather than reconstructed text cards. User selected a dedicated local login browser and additionally requested open-source research. The local flow is implemented and verified with owned synthetic content. A real authenticated Facebook/Threads account remains untested.
 
 ## Delivered behavior

@@ -137,6 +137,14 @@ Artifacts kiểm chứng nằm trong `test-results/` (ignored): `local-export-sm
 Các lệnh verification thực tế dùng binary Node trực tiếp để tránh bootstrap package manager ngoài dự kiến; tương đương `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:integration`, `pnpm build`. Chạy suite UI với `pnpm --filter @shorts-factory/web exec playwright test --config playwright-local-export.config.ts`; đặt `LOCAL_EXPORT_UI_BASE_URL=http://127.0.0.1:3000` khi dùng app đang chạy. Không chạy Next dev/build đồng thời trên cùng `.next`.
 # Ảnh post/comment thật qua trình duyệt local
 
+**Cập nhật:** mặc định dùng chính Chrome/Edge bạn đang mở Studio. Chạy `pnpm local:capture:setup`, mở `chrome://extensions` hoặc `edge://extensions`, bật Developer mode, chọn **Load unpacked** và thư mục `E:/Workspaces/short-factory/.data/source-capture/extension`. Tải lại Studio. Trong Studio, dán link và bấm **Mở bài trong trình duyệt hiện tại**; mở đủ bài/bình luận rồi bấm biểu tượng extension **Shorts Factory — Chụp bài gốc** trên tab nguồn. Extension chỉ chụp sau thao tác đó, dùng phiên Facebook/Threads sẵn có trong trình duyệt. Không cần đăng nhập lại ở cửa sổ Chromium riêng.
+
+Chrome/Edge hiển thị cảnh báo debugger khi extension đang chụp. Extension chỉ gắn vào tab được mở từ Studio, khôi phục kích thước và cuộn trang, rồi ngắt debugger. Không đọc cookie/mật khẩu và không bật cổng debug của trình duyệt. Giữ tab Studio mở để nhận ảnh; không có quyền tự động cài extension từ trang web. Chưa cài extension vẫn có thể mở link xem bài, nhưng chưa thể chụp từ phiên đó.
+
+Lượt chụp hiện tại ở trạng thái `WAITING_BROWSER` trong PostgreSQL, chỉ chính người yêu cầu được gửi ảnh/kết quả. Ảnh tạm bị giới hạn số lượng/dung lượng, đóng băng theo ID và được dọn bằng outbox sau nhập/hủy/hết hạn. Sau 30 phút không gửi kết quả, lượt chụp hết hạn. Thông tin lưu để khôi phục trang chỉ có ID/link/cấu hình, không có nội dung/ảnh/cookie.
+
+Các hướng dẫn cửa sổ riêng bên dưới vẫn dùng được trong **Tùy chọn: dùng cửa sổ chụp riêng**.
+
 Chạy `pnpm local:capture:setup`, rồi `pnpm local:export`. Setup dùng checkout `ai-comment` nằm cạnh dự án, hoặc đường dẫn `LOCAL_CAPTURE_ENGINE_PATH`; engine không được đóng gói trong repo này. Python/Chromium nằm riêng trong `.data/source-capture/`, không chung môi trường TTS.
 
 Trong Studio → nhập bài: chọn kênh, dán link Facebook/Threads, bấm **Mở trình duyệt đăng nhập**. Đăng nhập và mở đúng bài trong cửa sổ riêng; tải thêm bình luận/“Xem thêm” nếu cần, rồi quay lại bấm **Đã đăng nhập · Chụp bài và bình luận**. Xem ảnh gốc/bản che tên, khai báo quyền của bài và bình luận, duyệt và tạo MP4. Không cần gõ từng bình luận.

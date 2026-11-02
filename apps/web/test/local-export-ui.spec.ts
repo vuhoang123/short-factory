@@ -21,6 +21,9 @@ async function mockExport(page: Page, options: { capture?: boolean; deduplicated
   let runStatus = options.history ? 'RUNNING' : 'SUCCEEDED';
   let produceRequests = 0;
   let capturePolls = 0;
+  let currentBrowserCapture = false;
+  let submittedCapture = false;
+  let captureTerminalStatus: string | null = null;
   const captureId = '11111111-2222-4222-8222-111111111111';
   const savedComments = commentIds.map((id, index) => ({ id, externalId: `c${index + 1}`, body: `Bình luận đã lưu ${index + 1}.`, likes: 100 - index, sensitiveFlags: [] }));
   const savedPost = () => ({ id: postId, title: 'Câu chuyện đã lưu', body: 'Nội dung thực tế trong cơ sở dữ liệu.', canonicalUrl: 'https://www.facebook.com/example/posts/123', platform: 'MANUAL', externalPostId: 'manual-123', discoveredAt: now, sensitiveFlags: [],
@@ -28,9 +31,13 @@ async function mockExport(page: Page, options: { capture?: boolean; deduplicated
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request(); const url = new URL(request.url()); const path = url.pathname.replace('/api/v1', '');
     if (request.method() === 'POST') {
-      const body: unknown = request.postDataJSON(); mutations.push({ path, body, key: request.headers()['idempotency-key'] });
+      const imageUpload = /\/source-captures\/[^/]+\/images\/[a-f0-9]{32}$/.test(path);
+      const body: unknown = imageUpload ? { bytes: request.postDataBuffer()?.byteLength } : request.postDataJSON(); mutations.push({ path, body, key: request.headers()['idempotency-key'] });
+      if (imageUpload) { await route.fulfill({ json: { uploaded: true } }); return; }
+      if (path === `/source-captures/${captureId}/result`) { submittedCapture = true; capturePolls = 0; await route.fulfill({ json: { id: captureId, status: 'QUEUED' } }); return; }
+      if (path === `/source-captures/${captureId}/cancel`) { captureTerminalStatus = 'CANCELLED'; await route.fulfill({ json: { id: captureId, status: 'CANCELLED' } }); return; }
       if (path === '/source-captures/browser') { await route.fulfill({ json: { opened: true } }); return; }
-      if (path === '/source-captures') { await route.fulfill({ json: { id: captureId, status: 'QUEUED' } }); return; }
+      if (path === '/source-captures') { currentBrowserCapture = Boolean(body && typeof body === 'object' && 'browser' in body && body.browser === 'CURRENT'); await route.fulfill({ json: { id: captureId, status: currentBrowserCapture ? 'WAITING_BROWSER' : 'QUEUED' } }); return; }
       if (path === '/imports/manual') { await route.fulfill({ json: { postId, deduplicated: options.deduplicated ?? false, warnings: [] } }); return; }
       if (path.endsWith('/rights/review')) { rightsStatus = 'APPROVED'; if (!options.belowThreshold) candidateStatus = 'PENDING_REVIEW'; await route.fulfill({ json: { postId, reviewStatus: rightsStatus } }); return; }
       if (path === `/candidates/${candidateId}/review`) { candidateStatus = 'APPROVED'; await route.fulfill({ json: { id: candidateId, status: candidateStatus } }); return; }
@@ -43,9 +50,9 @@ async function mockExport(page: Page, options: { capture?: boolean; deduplicated
       if (path === `/production-runs/${runId}/cancel`) { runStatus = 'CANCELLED'; await route.fulfill({ json: { runId, status: 'CANCELLED' } }); return; }
       await route.fulfill({ status: 400, json: { code: 'UNEXPECTED_MUTATION', message: path } }); return;
     }
-    const captureComplete = path === `/source-captures/${captureId}` ? ++capturePolls > 1 : capturePolls > 1;
+    const captureComplete = (path === `/source-captures/${captureId}` ? ++capturePolls > 1 : capturePolls > 1) && (!currentBrowserCapture || submittedCapture);
     const data: Record<string, unknown> = {
-      [`/source-captures/${captureId}`]: { id: captureId, status: captureComplete ? 'SUCCEEDED' : 'RUNNING', errorCode: null, output: captureComplete ? { postId, warnings: [], scannedComments: 10, capturedComments: 3 } : null },
+      [`/source-captures/${captureId}`]: { id: captureId, status: captureTerminalStatus ?? (captureComplete ? 'SUCCEEDED' : currentBrowserCapture && !submittedCapture ? 'WAITING_BROWSER' : 'RUNNING'), errorCode: null, output: captureComplete ? { postId, warnings: [], scannedComments: 10, capturedComments: 3 } : null },
       [`/posts/${postId}/source-images`]: { items: options.capture ? [{ id: assetId, metadata: { postId, captureRunId: captureId, sourceRef: `post:${postId}`, variant: 'ANONYMIZED', textHash: 'a'.repeat(64), width: 650, height: 554 } }] : [] },
       '/auth/me': { user: { id: 'owner-1', email: 'local@example.org', name: 'Local owner' }, workspaces: [{ id: workspaceId, name: 'Local fixture', role: options.role ?? 'OWNER' }], activeWorkspaceId: workspaceId },
       '/channels': { items: [{ id: channelId, name: 'Kênh local', language: 'vi', minimumCandidateScore: 55 }] },
@@ -114,16 +121,50 @@ test('local export uses explicit source and candidate reviews, survives retry/re
   expect(mutations.some((item) => item.path.startsWith('/publications'))).toBe(false);
 });
 
-test('browser capture resumes after reload, previews the actual masked image and requires a rights declaration', async ({ page }) => {
+test('current-browser capture resumes after reload, receives extension screenshots and requires a rights declaration', async ({ page }) => {
   const mutations = await mockExport(page, { capture: true });
+  await page.addInitScript(() => {
+    window.addEventListener('message', event => {
+      if (event.source !== window || event.origin !== location.origin || event.data?.source !== 'shorts-factory') return;
+      if (event.data.type === 'PING') window.postMessage({ source: 'shorts-factory-extension', type: 'PONG', requestId: event.data.requestId, version: '1.0.0' }, location.origin);
+      if (event.data.type === 'PREPARE_CAPTURE') {
+        sessionStorage.setItem('fixture-extension-request', JSON.stringify(event.data));
+        window.postMessage({ source: 'shorts-factory-extension', type: 'PREPARED', requestId: event.data.requestId, jobId: event.data.jobId, sourceTabId: 123 }, location.origin);
+      }
+    });
+  });
   await page.goto('/export');
-  const capture = page.getByRole('button', { name: 'Đã đăng nhập · Chụp bài và bình luận', exact: true });
-  await expect(capture).toBeDisabled();
+  await expect(page.getByText('Đã kết nối extension Shorts Factory.', { exact: true })).toBeVisible();
   await page.getByLabel('Link để chụp ảnh gốc').fill('https://www.facebook.com/share/p/owned-fixture/');
-  await page.getByRole('button', { name: 'Mở trình duyệt đăng nhập', exact: true }).click();
-  await expect(capture).toBeEnabled(); await capture.click();
-  await expect(page.getByText('Đang đọc nội dung và chụp ảnh gốc…', { exact: false })).toBeVisible();
+  await page.getByRole('button', { name: 'Mở bài trong trình duyệt hiện tại', exact: true }).click();
+  await expect(page.getByText('Sẵn sàng nhận ảnh.', { exact: false })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => sessionStorage.getItem('fixture-extension-request'))).not.toBeNull();
   await page.reload();
+  await expect(page.getByText('Sẵn sàng nhận ảnh.', { exact: false })).toBeVisible();
+  const pngBase64 = readFileSync(`../../examples/source-capture/${sourceCaptureFixture.source_image_id}.png`).toString('base64');
+  const imageId = sourceCaptureFixture.source_image_id;
+  await page.evaluate(({ imageId, pngBase64 }) => {
+    const request = JSON.parse(sessionStorage.getItem('fixture-extension-request')!);
+    window.postMessage({ source: 'shorts-factory-extension', type: 'CAPTURE_IMAGE', requestId: request.requestId, jobId: crypto.randomUUID(), imageId, pngBase64 }, location.origin);
+    window.dispatchEvent(new MessageEvent('message', { source: window, origin: 'https://untrusted.example', data: { source: 'shorts-factory-extension', type: 'CAPTURE_IMAGE', requestId: request.requestId, jobId: request.jobId, imageId, pngBase64 } }));
+  }, { imageId, pngBase64 });
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  expect(mutations.some(item => item.path.includes('/images/'))).toBe(false);
+  const imageAck = await page.evaluate(async ({ imageId, pngBase64 }) => {
+    const request = JSON.parse(sessionStorage.getItem('fixture-extension-request')!);
+    return new Promise<boolean>(resolve => {
+      const listener = (event: MessageEvent) => {
+        if (event.source === window && event.origin === location.origin && event.data?.source === 'shorts-factory' && event.data.type === 'CAPTURE_ACK' && event.data.imageId === imageId) { window.removeEventListener('message', listener); resolve(Boolean(event.data.ok)); }
+      };
+      window.addEventListener('message', listener);
+      window.postMessage({ source: 'shorts-factory-extension', type: 'CAPTURE_IMAGE', requestId: request.requestId, jobId: request.jobId, imageId, pngBase64 }, location.origin);
+    });
+  }, { imageId, pngBase64 });
+  expect(imageAck).toBe(true);
+  await page.evaluate(post => {
+    const request = JSON.parse(sessionStorage.getItem('fixture-extension-request')!);
+    window.postMessage({ source: 'shorts-factory-extension', type: 'CAPTURE_RESULT', requestId: request.requestId, jobId: request.jobId, post }, location.origin);
+  }, sourceCaptureFixture);
   await expect(page.getByRole('heading', { name: '2. Kiểm tra bản lưu và duyệt' })).toBeVisible();
   await expect(page.getByAltText('Ảnh chụp bài gốc')).toBeVisible();
   const rights = page.getByRole('button', { name: 'Lưu và duyệt quyền bản chụp', exact: true });
@@ -140,7 +181,54 @@ test('browser capture resumes after reload, previews the actual masked image and
   await expect(page.getByRole('button', { name: 'Tạo video MP4', exact: true })).toBeEnabled();
   await page.screenshot({ path: '../../test-results/local-export-browser/source-capture-review.png', fullPage: true });
   expect(mutations.filter(item => item.path === '/source-captures')).toHaveLength(1);
+  expect(mutations.find(item => item.path === '/source-captures')?.body).toMatchObject({ browser: 'CURRENT', channelId });
+  expect(mutations.filter(item => item.path.endsWith(`/images/${imageId}`))).toHaveLength(1);
+  expect(mutations.filter(item => item.path.endsWith('/result'))).toHaveLength(1);
+  expect(mutations.some(item => item.path === '/source-captures/browser')).toBe(false);
   expect(mutations.some(item => item.path === '/imports/manual')).toBe(false);
+});
+
+test('opening without an extension uses the existing browser and does not launch a private browser or enqueue capture', async ({ page, context }) => {
+  const mutations = await mockExport(page);
+  await context.route('https://www.facebook.com/share/p/owned-fixture/', route => route.fulfill({ contentType: 'text/html', body: '<h1>Owned source preview fixture</h1>' }));
+  await page.goto('/export');
+  await page.getByLabel('Link để chụp ảnh gốc').fill('https://www.facebook.com/share/p/owned-fixture/');
+  const popupPromise = page.waitForEvent('popup');
+  await page.getByRole('button', { name: 'Mở bài trong trình duyệt hiện tại', exact: true }).click();
+  const popup = await popupPromise;
+  await expect(popup).toHaveURL('https://www.facebook.com/share/p/owned-fixture/');
+  await expect(page.getByText('Chưa kết nối extension Shorts Factory.', { exact: false })).toBeVisible();
+  expect(mutations).toHaveLength(0);
+  await popup.close();
+});
+
+for (const cancelFrom of ['Studio', 'extension'] as const) test(`cancelling a current-browser request from ${cancelFrom} stops waiting and clears its resumable request`, async ({ page }) => {
+  const mutations = await mockExport(page, { capture: true });
+  await page.addInitScript(() => {
+    window.addEventListener('message', event => {
+      if (event.source !== window || event.origin !== location.origin || event.data?.source !== 'shorts-factory') return;
+      if (event.data.type === 'PING') window.postMessage({ source: 'shorts-factory-extension', type: 'PONG', requestId: event.data.requestId }, location.origin);
+      if (event.data.type === 'PREPARE_CAPTURE') window.postMessage({ source: 'shorts-factory-extension', type: 'PREPARED', requestId: event.data.requestId, jobId: event.data.jobId }, location.origin);
+      if (event.data.type === 'CANCEL_CAPTURE') sessionStorage.setItem('fixture-capture-cancelled', event.data.jobId);
+    });
+  });
+  await page.goto('/export');
+  await expect(page.getByText('Đã kết nối extension Shorts Factory.', { exact: true })).toBeVisible();
+  await page.getByLabel('Link để chụp ảnh gốc').fill('https://www.facebook.com/share/p/owned-fixture/');
+  await page.getByRole('button', { name: 'Mở bài trong trình duyệt hiện tại', exact: true }).click();
+  await expect(page.getByText('Sẵn sàng nhận ảnh.', { exact: false })).toBeVisible();
+  if (cancelFrom === 'Studio') await page.getByRole('button', { name: 'Hủy chụp', exact: true }).click();
+  else await page.evaluate(() => {
+    const pending = JSON.parse(sessionStorage.getItem('sf:capture:11111111-1111-4111-8111-111111111111:owner-1')!);
+    window.postMessage({ source: 'shorts-factory-extension', type: 'CAPTURE_CANCELLED', requestId: pending.requestId, jobId: pending.id }, location.origin);
+  });
+  await expect(page.getByRole('button', { name: 'Hủy chụp', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Mở bài trong trình duyệt hiện tại', exact: true })).toBeEnabled();
+  await expect.poll(() => page.evaluate(() => sessionStorage.getItem('sf:capture:11111111-1111-4111-8111-111111111111:owner-1'))).toBeNull();
+  expect(mutations.filter(item => item.path.endsWith('/cancel'))).toHaveLength(1);
+  if (cancelFrom === 'Studio') await expect.poll(() => page.evaluate(() => sessionStorage.getItem('fixture-capture-cancelled'))).toBe('11111111-2222-4222-8222-111111111111');
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Hủy chụp', exact: true })).toHaveCount(0);
 });
 
 test('history resumes a durable run without browser progress and cancellation requires an explicit confirmation', async ({ page }) => {

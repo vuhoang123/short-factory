@@ -4,6 +4,8 @@ A hybrid editorial MVP with workspace isolation from the first import. Phase 0â€
 
 ## Start locally
 
+Current-browser capture: after `pnpm local:capture:setup`, load `.data/source-capture/extension` once through Chrome/Edge's **Load unpacked** extension screen, then reload Studio. **Open in current browser** opens a source tab in that browser/profile; click the extension on the source tab to capture it and return screenshots to Studio. The default no longer opens a separate Chromium login. See the [local guide](docs/16-LOCAL-EXPORT.md).
+
 For local export, see the [Vietnamese guide](docs/16-LOCAL-EXPORT.md). With PostgreSQL/Redis configured, run `pnpm local:tts:setup` for VieNeu and `pnpm local:capture:setup` for the local `ai-comment` checkout, then `pnpm local:export`. In Studio â†’ Import, paste a Facebook/Threads post link, open the dedicated login browser, request original post/comment screenshots, review images and rights, then render and download MP4. Text import remains an explicit alternative. Capture is user-initiated and local-only; social posting remains disabled. See [source evaluation](docs/research/VIDEO_READER_REFERENCES.md) and [verification](docs/product/SOURCE_CAPTURE_REPORT.md).
 
 Install Node.js 22.12 or later, pnpm 11.25.0 and Docker with Compose, then run from the repository root:

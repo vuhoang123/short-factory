@@ -4,7 +4,7 @@ import { canonicalUrlSchema, jobEnvelopeSchema, normalizeText, redactPersonalDat
 import { createSourceAdapter, detectSensitiveFlags, scoreContent, type ContentScore } from '@shorts-factory/sources';
 import { z } from 'zod';
 import type { WorkerConfig } from './config.js';
-import { processLocalCapture } from './local-capture.js';
+import { processLocalCapture, purgeCurrentBrowserCapture } from './local-capture.js';
 import { localCaptureCall } from '@shorts-factory/sources';
 
 const postSchema = z.object({
@@ -67,8 +67,10 @@ export class DiscoveryPipeline {
     if (job.step === 'LOCAL_CAPTURE_PURGE_REQUESTED') {
       const event = await this.db.outboxEvent.findFirst({ where: { id: job.jobId, workspaceId: job.workspaceId, eventType: job.step } });
       const scope = z.object({ workspaceId: z.literal(job.workspaceId), userId: z.string().uuid(), jobId: z.literal(job.entityId) }).parse(event?.payload);
-      await localCaptureCall('cancel', scope, 5000);
-      await localCaptureCall('purge', scope, 10_000);
+      if (!await purgeCurrentBrowserCapture(this.db, scope.workspaceId, scope.userId, scope.jobId)) {
+        await localCaptureCall('cancel', scope, 5000);
+        await localCaptureCall('purge', scope, 10_000);
+      }
       await this.db.outboxEvent.updateMany({ where: { id: job.jobId, workspaceId: job.workspaceId }, data: { payload: { ...scope, cleaned: true } } }); return;
     }
     if (!knownSteps.has(job.step)) throw new Error('UNSUPPORTED_DISCOVERY_EVENT');
