@@ -6,6 +6,7 @@ import { readWorkerConfig } from './config.js';
 import { relayPendingOutbox } from './outbox.js';
 import { DiscoveryPipeline, type DiscoveryEnvelope } from './pipeline.js';
 import { scheduleDueSources } from './scheduler.js';
+import { recoverDiscoveryJobs } from './recovery.js';
 
 const config = readWorkerConfig();
 const db = new PrismaClient();
@@ -37,11 +38,18 @@ worker.on('failed', (job, error) => {
 });
 worker.on('error', () => log({ level: 'error', event: 'worker_runtime_error', errorCode: 'WORKER_RUNTIME_ERROR' }));
 
-const outboxTimer = setInterval(() => {
+async function pollOutbox() {
   if (pollingOutbox) return;
   pollingOutbox = true;
-  void relayPendingOutbox(db, queue, config).then(count => { if (count) log({ level: 'info', event: 'outbox_relayed', count }); }).catch(() => log({ level: 'error', event: 'outbox_relay_failed', errorCode: 'OUTBOX_RELAY_FAILED' })).finally(() => { pollingOutbox = false; });
-}, config.DISCOVERY_RELAY_INTERVAL_MS);
+  try {
+    const recovered = await recoverDiscoveryJobs(db, queue, config);
+    if (recovered) log({ level: 'info', event: 'jobs_recovered', count: recovered });
+    const relayed = await relayPendingOutbox(db, queue, config);
+    if (relayed) log({ level: 'info', event: 'outbox_relayed', count: relayed });
+  } catch { log({ level: 'error', event: 'outbox_relay_failed', errorCode: 'OUTBOX_RELAY_FAILED' }); }
+  finally { pollingOutbox = false; }
+}
+const outboxTimer = setInterval(() => { void pollOutbox(); }, config.DISCOVERY_RELAY_INTERVAL_MS);
 const scheduleTimer = setInterval(() => {
   if (config.NODE_ENV === 'production') return;
   if (pollingSchedule) return;
@@ -62,5 +70,5 @@ async function shutdown(signal: string) {
 
 process.once('SIGINT', () => { void shutdown('SIGINT'); });
 process.once('SIGTERM', () => { void shutdown('SIGTERM'); });
-void relayPendingOutbox(db, queue, config).catch(() => log({ level: 'error', event: 'outbox_relay_failed', errorCode: 'OUTBOX_RELAY_FAILED' }));
+void pollOutbox();
 log({ level: 'info', event: 'worker_started', queue: config.DISCOVERY_QUEUE_NAME, concurrency: config.DISCOVERY_WORKER_CONCURRENCY });

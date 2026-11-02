@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { createContext, useCallback, useContext, useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { ApiError, api, errorMessage } from '../lib/api';
 import { sessionSchema, unknownResponseSchema, type Session } from '../lib/contracts';
 import { ErrorNotice } from './feedback';
@@ -17,6 +17,7 @@ export function useSession() {
 
 const navigation = [
   { path: '/guide', label: 'Hướng dẫn sử dụng', mark: '?' },
+  { path: '/export', label: 'Xuất video local', mark: '↓' },
   { path: '/dashboard', label: 'Overview', mark: '▦' },
   { path: '/channels', label: 'Content channels', mark: '▤' },
   { path: '/sources', label: 'Sources', mark: '↗' },
@@ -51,24 +52,33 @@ export function WorkspaceForm({ onCreated }: { onCreated: () => Promise<void> })
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname(); const router = useRouter();
   const [session, setSession] = useState<Session | null>(null);
+  const sessionRequest = useRef(0);
   const [error, setError] = useState(''); const [switching, setSwitching] = useState(false);
   const refresh = useCallback(async () => {
-    setSession(null);
-    try { setSession(await api('/auth/me', sessionSchema)); setError(''); }
-    catch (failure) { if (failure instanceof ApiError && failure.status === 401) router.replace('/login'); else setError(errorMessage(failure)); }
+    const request = ++sessionRequest.current;
+    try {
+      const next = await api('/auth/me', sessionSchema);
+      if (request !== sessionRequest.current) return;
+      setSession(next); setError('');
+    } catch (failure) {
+      if (request !== sessionRequest.current) return;
+      if (failure instanceof ApiError && failure.status === 401) { setSession(null); router.replace('/login'); } else setError(errorMessage(failure));
+    }
   }, [router]);
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { void refresh(); return () => { sessionRequest.current++; }; }, [refresh]);
 
   if (!session) return <main id="main-content" className="initial-loading">{error ? <ErrorNotice message={error} retry={() => void refresh()} /> : <p role="status">Opening your workspace…</p>}</main>;
   const workspace = session.workspaces.find((item) => item.id === session.activeWorkspaceId);
   const value: SessionContextValue = { session, refresh, role: workspace?.role };
 
   async function selectWorkspace(id: string) {
+    sessionRequest.current++;
     setSwitching(true); setError('');
-    try { await api('/auth/workspace', unknownResponseSchema, { method: 'POST', body: { workspaceId: id } }); await refresh(); router.refresh(); }
+    try { await api('/auth/workspace', unknownResponseSchema, { method: 'POST', body: { workspaceId: id } }); setSession(null); await refresh(); router.refresh(); }
     catch (failure) { setError(errorMessage(failure)); } finally { setSwitching(false); }
   }
   async function logout() {
+    sessionRequest.current++;
     try { await api('/auth/logout', unknownResponseSchema, { method: 'POST' }); router.replace('/login'); }
     catch (failure) { setError(errorMessage(failure)); }
   }

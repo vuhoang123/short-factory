@@ -193,6 +193,7 @@ export class DiscoveryService {
     const rows = await this.db.contentCandidate.findMany({
       where: {
         workspaceId: context.workspaceId,
+        ...(input.sourcePostId ? { sourcePostId: input.sourcePostId } : {}),
         ...(input.minScore !== undefined ? { score: { gte: input.minScore } } : {}),
         ...(input.candidateStatus ? { status: input.candidateStatus } : {}),
         post: postFilter,

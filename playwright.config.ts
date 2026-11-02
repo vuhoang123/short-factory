@@ -4,6 +4,9 @@ import { defineConfig, devices } from '@playwright/test';
 if (existsSync('.env')) process.loadEnvFile('.env');
 
 const baseURL = 'http://localhost:3002';
+const browserExecutable = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ?? (process.platform === 'win32'
+  ? ['C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'].find(existsSync)
+  : undefined);
 const environment = {
   ...process.env,
   APP_URL: baseURL,
@@ -16,6 +19,7 @@ const environment = {
 
 export default defineConfig({
   testDir: './tests/browser',
+  outputDir: './test-results/phase-one-browser',
   fullyParallel: false,
   workers: 1,
   retries: 0,
@@ -30,7 +34,7 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     video: 'off',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 1100 } } }],
+  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 1100 }, launchOptions: { executablePath: browserExecutable } } }],
   webServer: [
     {
       command: 'pnpm --filter @shorts-factory/api start',

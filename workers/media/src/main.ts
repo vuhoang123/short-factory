@@ -5,6 +5,7 @@ import { jobEnvelopeSchema } from '@shorts-factory/shared';
 import { readMediaWorkerConfig } from './config.js';
 import { relayMediaOutbox, type MediaEnvelope } from './outbox.js';
 import { MediaProductionPipeline } from './pipeline.js';
+import { recoverMediaJobs } from './recovery.js';
 
 const config = readMediaWorkerConfig();
 const db = new PrismaClient();
@@ -29,13 +30,18 @@ worker.on('failed', (job, error) => {
 });
 worker.on('error', () => log({ level: 'error', event: 'worker_runtime_error', errorCode: 'WORKER_RUNTIME_ERROR' }));
 
-const outboxTimer = setInterval(() => {
+async function pollOutbox() {
   if (pollingOutbox) return;
   pollingOutbox = true;
-  void relayMediaOutbox(db, queue, config).then((count) => { if (count) log({ level: 'info', event: 'outbox_relayed', count }); })
-    .catch(() => log({ level: 'error', event: 'outbox_relay_failed', errorCode: 'OUTBOX_RELAY_FAILED' }))
-    .finally(() => { pollingOutbox = false; });
-}, config.MEDIA_RELAY_INTERVAL_MS);
+  try {
+    const recovered = await recoverMediaJobs(db, queue, config);
+    if (recovered) log({ level: 'info', event: 'jobs_recovered', count: recovered });
+    const relayed = await relayMediaOutbox(db, queue, config);
+    if (relayed) log({ level: 'info', event: 'outbox_relayed', count: relayed });
+  } catch { log({ level: 'error', event: 'outbox_relay_failed', errorCode: 'OUTBOX_RELAY_FAILED' }); }
+  finally { pollingOutbox = false; }
+}
+const outboxTimer = setInterval(() => { void pollOutbox(); }, config.MEDIA_RELAY_INTERVAL_MS);
 
 async function shutdown(signal: string) {
   clearInterval(outboxTimer);
@@ -48,5 +54,5 @@ async function shutdown(signal: string) {
 }
 process.once('SIGINT', () => { void shutdown('SIGINT'); });
 process.once('SIGTERM', () => { void shutdown('SIGTERM'); });
-void relayMediaOutbox(db, queue, config).catch(() => log({ level: 'error', event: 'outbox_relay_failed', errorCode: 'OUTBOX_RELAY_FAILED' }));
+void pollOutbox();
 log({ level: 'info', event: 'worker_started', queue: config.MEDIA_QUEUE_NAME, concurrency: config.MEDIA_WORKER_CONCURRENCY });

@@ -70,6 +70,12 @@ The production API derives workspace scope from the authenticated session and me
 
 Rendered outputs enter `READY_FOR_REVIEW` with `reviewStatus=PENDING` until a reviewer records a decision. The current API uses the existing workspace-local content-addressed object store; it does not issue public URLs or implement an R2 adapter.
 
+## Phase 6 local production operations
+
+`GET /production-runs?limit=20&cursor=<run-id>&status=<status>` returns `{ items, nextCursor }`, ordered newest first by creation time and ID. Limit is 1–100; status and cursor are optional. Every row and cursor is authorized against the session workspace. Summaries include stage/progress, attempt count, error code and available output IDs; they omit raw input and source body. Detail remains available at `GET /production-runs/:id`.
+
+`POST /production-runs/:id/cancel` accepts the strict body `{}` and requires `Idempotency-Key` plus OWNER/ADMIN/EDITOR membership. QUEUED, RUNNING and FAILED_RETRYABLE runs can be cancelled; repeated cancellation is harmless. Other terminal states return `409 RUN_NOT_CANCELLABLE`. Cancellation is committed to PostgreSQL and audited before the worker observes it. Active rendering is aborted and cleaned up; partial videos are cancelled and cannot be downloaded. A completed approved video is unaffected. Administrators explicitly retry failed runs at `POST /production-runs/:id/retry`; cancelled runs require a new production request.
+
 ## Phase 5 automation and analytics
 
 Automation mutations are workspace-scoped, role-checked, Zod-validated and idempotent. Rule edits create immutable versions; each run persists its configuration and control-version snapshot with the workflow, budget reservation and outbox event in one PostgreSQL transaction. Workers recheck membership, rights, approvals, pause/stop state and reservations at stage boundaries. Dry runs do not reserve budget or enqueue production. `GET /automation` includes current controls, authorized account labels, workflow summaries, usage estimates and the pending approval queue.

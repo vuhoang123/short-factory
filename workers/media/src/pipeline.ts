@@ -4,12 +4,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { Prisma, PrismaClient, type ContentRight, type ProductionRun, type StoryProject, type StoryVersion } from '@shorts-factory/database';
 import { jobEnvelopeSchema } from '@shorts-factory/shared';
-import { LocalObjectStore, assertGroundedScript, audioCacheKey, createRenderManifest, createScriptProvider, createTtsProvider, generateSubtitleTrack, listVoiceProfiles, productionInputSchema, renderVideo, storyScriptSchema, type CompositionInput, type ProductionInput, type ScriptSource, type StoryScript } from '@shorts-factory/media';
+import { LocalObjectStore, assertGroundedScript, audioCacheKey, createRenderManifest, createScriptProvider, createTtsProvider, generateSubtitleTrack, listVoiceProfiles, productionInputSchema, renderManifestSchema, renderVideo, storyScriptSchema, type CompositionInput, type ProductionInput, type ScriptSource, type StoryScript } from '@shorts-factory/media';
 import { z } from 'zod';
 import type { MediaWorkerConfig } from './config.js';
 import type { MediaEnvelope } from './outbox.js';
 
 const noopOutputSchema = z.object({ ok: z.literal(true) }).strict();
+const audioOutputSchema = z.object({ ok: z.literal(true), audioAssetIds: z.array(z.string().uuid()).min(1).max(30) }).strict();
 const versionOutputSchema = z.object({ versionId: z.string().uuid() }).strict();
 const scriptOutputSchema = z.object({ script: storyScriptSchema, provider: z.string(), modelVersion: z.string() }).strict();
 const manifestOutputSchema = z.object({ manifestId: z.string().uuid(), videoId: z.string().uuid() }).strict();
@@ -18,6 +19,7 @@ const alignmentOutputSchema = z.object({ timingPrecision: z.enum(['PROVIDER', 'A
 const assetPreparationOutputSchema = z.object({ mediaAssetIds: z.array(z.string().uuid()), ready: z.literal(true) }).strict();
 const mediaValidationOutputSchema = videoOutputSchema.extend({ width: z.literal(1080), height: z.literal(1920), fps: z.literal(30), codec: z.literal('h264'), audioCodec: z.literal('aac') }).strict();
 const storageUploadOutputSchema = videoOutputSchema.extend({ checksum: z.string().regex(/^[a-f0-9]{64}$/), sizeBytes: z.number().int().positive() }).strict();
+const productionRequestVersionSchema = z.object({ version: z.number().int().positive().default(1) }).passthrough();
 
 type RunWithStory = ProductionRun & {
   story: StoryProject & {
@@ -29,6 +31,7 @@ type RunWithStory = ProductionRun & {
     channel: { id: string; name: string; language: string } | null;
   };
 };
+type SelectedAudio = Prisma.AudioAssetGetPayload<{ include: { mediaAsset: true } }>;
 
 function safePlatform(platform: string): ScriptSource['platform'] {
   if (platform === 'MANUAL' || platform === 'REDDIT' || platform === 'THREADS' || platform === 'FACEBOOK') return platform;
@@ -79,23 +82,39 @@ export class MediaProductionPipeline {
     if (job.step !== 'PRODUCTION_RUN_REQUESTED') throw new Error('UNSUPPORTED_MEDIA_EVENT');
     const run = await this.loadRun(job.workspaceId, job.entityId);
     if (!run) return;
-    if (['SUCCEEDED', 'CANCELLED', 'BLOCKED_RIGHTS', 'BLOCKED_EXTERNAL'].includes(run.status)) return;
-    const input = productionInputSchema.parse(run.input);
+    if (['SUCCEEDED', 'CANCELLED', 'BLOCKED_RIGHTS', 'BLOCKED_EXTERNAL', 'FAILED_PERMANENT'].includes(run.status)) return;
+    const attemptLimit = job.version - 1 + maxAttempts;
     const now = new Date();
-    const active = await this.db.productionRun.updateMany({
-      where: {
-        id: run.id,
-        workspaceId: run.workspaceId,
-        OR: [
-          { status: { in: ['QUEUED', 'FAILED_RETRYABLE', 'FAILED_PERMANENT'] } },
-          { status: 'RUNNING', OR: [{ workerLeaseUntil: null }, { workerLeaseUntil: { lt: now } }] },
-        ],
-      },
-      data: { status: 'RUNNING', attempts: { increment: 1 }, workerLeaseUntil: new Date(now.getTime() + 90_000), startedAt: run.startedAt ?? now, errorCode: null },
-    });
-    if (!active.count) return;
+    const input = await this.db.$transaction(async (tx) => {
+      const latest = await tx.outboxEvent.findFirst({
+        where: { workspaceId: run.workspaceId, aggregateId: run.id, eventType: 'PRODUCTION_RUN_REQUESTED' },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], select: { payload: true },
+      });
+      const request = productionRequestVersionSchema.safeParse(latest?.payload);
+      // A delayed delivery cannot exhaust or claim a newer explicit retry's budget.
+      if (!request.success || request.data.version !== job.version) return null;
+      if (run.attempts >= attemptLimit) {
+        const exhausted = await tx.productionRun.updateMany({ where: { id: run.id, workspaceId: run.workspaceId, attempts: run.attempts, OR: [{ status: { in: ['QUEUED', 'FAILED_RETRYABLE'] } }, { status: 'RUNNING', workerLeaseUntil: { lt: new Date() } }] }, data: { status: 'FAILED_PERMANENT', errorCode: 'ATTEMPTS_EXHAUSTED', completedAt: new Date(), workerLeaseUntil: null } });
+        if (exhausted.count) await tx.renderJob.updateMany({ where: { workspaceId: run.workspaceId, productionRunId: run.id }, data: { status: 'FAILED_PERMANENT', errorCode: 'ATTEMPTS_EXHAUSTED', completedAt: new Date() } });
+        return null;
+      }
+      const input = productionInputSchema.parse(run.input);
+      const active = await tx.productionRun.updateMany({
+        where: {
+          id: run.id,
+          workspaceId: run.workspaceId,
+          attempts: run.attempts,
+          OR: [
+            { status: { in: ['QUEUED', 'FAILED_RETRYABLE'] } },
+            { status: 'RUNNING', OR: [{ workerLeaseUntil: null }, { workerLeaseUntil: { lt: now } }] },
+          ],
+        },
+        data: { status: 'RUNNING', attempts: { increment: 1 }, workerLeaseUntil: new Date(now.getTime() + 90_000), startedAt: run.startedAt ?? now, errorCode: null },
+      });
+      return active.count ? input : null;
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    if (!input) return;
     const claimedRun: RunWithStory = { ...run, status: 'RUNNING', attempts: run.attempts + 1 };
-    await this.db.renderJob.updateMany({ where: { workspaceId: run.workspaceId, productionRunId: run.id }, data: { status: 'RUNNING', attempts: { increment: 1 }, startedAt: new Date(), errorCode: null } });
     const leaseHeartbeat = setInterval(() => {
       void this.db.productionRun.updateMany({
         where: { id: claimedRun.id, workspaceId: claimedRun.workspaceId, status: 'RUNNING', attempts: claimedRun.attempts },
@@ -104,28 +123,58 @@ export class MediaProductionPipeline {
     }, 20_000);
     leaseHeartbeat.unref();
     try {
+      await this.db.$transaction(async (tx) => {
+        await this.assertAttemptActive(tx, claimedRun);
+        await tx.renderJob.updateMany({ where: { workspaceId: run.workspaceId, productionRunId: run.id }, data: { status: 'RUNNING', attempts: claimedRun.attempts, startedAt: new Date(), errorCode: null } });
+      });
       await this.execute(claimedRun, input);
     } catch (error) {
       const code = errorCode(error);
       const blocked = isBlocked(code);
       const paused = code === 'AUTOMATION_PAUSED';
-      const cancelled = code === 'AUTOMATION_CANCELLED';
-      const terminal = !paused && attemptsMade + 1 >= maxAttempts;
+      const cancelled = code === 'AUTOMATION_CANCELLED' || code === 'USER_CANCELLED';
+      const terminal = !paused && (claimedRun.attempts >= attemptLimit || attemptsMade + 1 >= maxAttempts);
       const now = new Date();
       const status = cancelled ? 'CANCELLED' : blocked ? (code === 'BLOCKED_EXTERNAL' || code === 'PAID_PROVIDER_BUDGET_UNBOUNDED' ? 'BLOCKED_EXTERNAL' : 'BLOCKED_RIGHTS') : terminal ? 'FAILED_PERMANENT' : 'FAILED_RETRYABLE';
       await this.db.$transaction(async (tx) => {
-        await tx.productionRun.updateMany({ where: { id: claimedRun.id, workspaceId: claimedRun.workspaceId, status: 'RUNNING', attempts: claimedRun.attempts }, data: { status, workerLeaseUntil: null, errorCode: code, completedAt: cancelled || blocked || terminal ? now : null } });
+        const updated = await tx.productionRun.updateMany({ where: { id: claimedRun.id, workspaceId: claimedRun.workspaceId, status: 'RUNNING', attempts: claimedRun.attempts }, data: { status, workerLeaseUntil: null, errorCode: code, completedAt: cancelled || blocked || terminal ? now : null } });
+        if (!updated.count) return;
         await tx.renderJob.updateMany({ where: { workspaceId: run.workspaceId, productionRunId: run.id, status: 'RUNNING', attempts: claimedRun.attempts }, data: { status, errorCode: code, completedAt: cancelled || blocked || terminal ? now : null } });
         if (cancelled) {
           const parent = await tx.workflowRun.findFirst({ where: { workspaceId: run.workspaceId, entityType: 'AUTOPILOT', output: { path: ['productionRunId'], equals: run.id } }, select: { id: true } });
           if (parent) await tx.budgetReservation.updateMany({ where: { workspaceId: run.workspaceId, workflowRunId: parent.id, status: 'CLOSING' }, data: { status: 'RELEASED' } });
         }
       });
-      throw new Error(code);
+      if (!cancelled && code !== 'WORKER_LEASE_LOST') throw new Error(code);
     } finally {
       clearInterval(leaseHeartbeat);
       await this.db.productionRun.updateMany({ where: { id: claimedRun.id, workspaceId: claimedRun.workspaceId, attempts: claimedRun.attempts }, data: { workerLeaseUntil: null } });
     }
+  }
+
+  private async assertAttemptActive(tx: Prisma.TransactionClient, run: RunWithStory) {
+    const active = await tx.productionRun.findFirst({ where: { id: run.id, workspaceId: run.workspaceId, status: 'RUNNING', attempts: run.attempts, workerLeaseUntil: { gt: new Date() } }, select: { id: true } });
+    if (active) return;
+    const current = await tx.productionRun.findFirst({ where: { id: run.id, workspaceId: run.workspaceId }, select: { status: true, attempts: true } });
+    if (current?.status === 'CANCELLED' && current.attempts === run.attempts) throw new Error('USER_CANCELLED');
+    throw new Error('WORKER_LEASE_LOST');
+  }
+
+  private watchRender(run: RunWithStory, controller: AbortController) {
+    let pending = Promise.resolve();
+    let checking = false;
+    const timer = setInterval(() => {
+      if (checking || controller.signal.aborted) return;
+      checking = true;
+      pending = (async () => {
+        const current = await this.db.productionRun.findFirst({ where: { id: run.id, workspaceId: run.workspaceId }, select: { status: true, attempts: true, workerLeaseUntil: true } });
+        if (current?.status === 'CANCELLED' && current.attempts === run.attempts) throw new Error('USER_CANCELLED');
+        if (!current || current.status !== 'RUNNING' || current.attempts !== run.attempts || !current.workerLeaseUntil || current.workerLeaseUntil.getTime() <= Date.now()) throw new Error('WORKER_LEASE_LOST');
+        await this.assertAutomationAction(run, false);
+      })().catch((error: unknown) => { controller.abort(new Error(errorCode(error) === 'MEDIA_PRODUCTION_FAILED' ? 'WORKER_STATE_UNAVAILABLE' : errorCode(error))); }).finally(() => { checking = false; });
+    }, this.config.MEDIA_CANCEL_POLL_MS);
+    timer.unref();
+    return { stop: async () => { clearInterval(timer); await pending; } };
   }
 
   private async loadRun(workspaceId: string, id: string): Promise<RunWithStory | null> {
@@ -167,8 +216,8 @@ export class MediaProductionPipeline {
   }
 
   private async assertRunActive(tx: Prisma.TransactionClient, run: RunWithStory, input: ProductionInput) {
-    const [currentRun, post, background] = await Promise.all([
-      tx.productionRun.findFirst({ where: { id: run.id, workspaceId: run.workspaceId, status: 'RUNNING', attempts: run.attempts, workerLeaseUntil: { gt: new Date() } }, select: { id: true } }),
+    await this.assertAttemptActive(tx, run);
+    const [post, background] = await Promise.all([
       tx.sourcePost.findFirst({ where: { id: run.story.post.id, workspaceId: run.workspaceId, deletedAt: null }, include: { comments: true, rights: { orderBy: { createdAt: 'desc' }, take: 1 } } }),
       input.backgroundAssetId ? tx.mediaAsset.findFirst({ where: { id: input.backgroundAssetId, workspaceId: run.workspaceId, kind: 'BACKGROUND' }, select: { rightsMetadata: true } }) : Promise.resolve(null),
     ]);
@@ -182,7 +231,7 @@ export class MediaProductionPipeline {
       assertAutomationMediaPermission({ parentStatus: parent.status, controlStatus: rule?.status ?? null, reservationStatus: reservation?.status ?? null, reservedUsd: Number(reservation?.amountUsd ?? 0), requiredUsd: snapshot.config.estimatedRunCostUsd, paidProvider: false });
     }
     const rights = post?.rights[0];
-    if (!currentRun || !post || !rights || rights.reviewStatus !== 'APPROVED' || !rights.attested || !rights.commercialAllowed || rights.revokedAt || (rights.expiresAt && rights.expiresAt.getTime() <= Date.now()) || rights.allowedPlatforms.length === 0 || (rights.attributionRequired && !rights.attributionText?.trim())) throw new Error('BLOCKED_RIGHTS');
+    if (!post || !rights || rights.reviewStatus !== 'APPROVED' || !rights.attested || !rights.commercialAllowed || rights.revokedAt || (rights.expiresAt && rights.expiresAt.getTime() <= Date.now()) || rights.allowedPlatforms.length === 0 || (rights.attributionRequired && !rights.attributionText?.trim())) throw new Error('BLOCKED_RIGHTS');
     const selected = post.comments.filter((comment) => input.commentIds.includes(comment.id));
     if (post.sensitiveFlags.length || selected.length !== input.commentIds.length || selected.some((comment) => comment.sensitiveFlags.length)) throw new Error('BLOCKED_RIGHTS');
     if (input.backgroundAssetId && (!background || !validBackgroundRights(background.rightsMetadata))) throw new Error('BLOCKED_RIGHTS');
@@ -206,7 +255,7 @@ export class MediaProductionPipeline {
       assertGroundedScript(script, source);
       return { ok: true };
     });
-    await this.generateAudio(run, input, version, script);
+    const audio = await this.generateAudio(run, input, version, script);
     if (input.mode === 'AUDIO_ONLY') {
       await this.db.$transaction(async (tx) => {
         await this.assertRunActive(tx, run, input);
@@ -216,11 +265,11 @@ export class MediaProductionPipeline {
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
       return;
     }
-    await this.prepareAssets(run, input, version, script);
-    const alignment = await this.alignAudio(run, input, version, script);
+    await this.prepareAssets(run, input, script, audio);
+    const alignment = await this.alignAudio(run, input, script, audio);
     await this.createSubtitles(run, input, version, script, alignment);
-    const manifest = await this.createManifest(run, input, version, script);
-    const rendered = await this.render(run, input, version, script, manifest);
+    const manifest = await this.createManifest(run, input, version, script, audio);
+    const rendered = await this.render(run, input, manifest, audio);
     await this.validateMedia(run, input, rendered);
     await this.confirmStoredMedia(run, input, rendered);
     await this.stage(run, 'READY_FOR_REVIEW', noopOutputSchema, async () => {
@@ -275,46 +324,80 @@ export class MediaProductionPipeline {
   }
 
   private async generateAudio(run: RunWithStory, input: ProductionInput, version: StoryVersion, script: StoryScript) {
-    const selected = input.selectedSegmentIds.length ? new Set(input.selectedSegmentIds) : null;
-    const segments = script.segments.filter((segment) => !selected || selected.has(segment.id));
+    const selectedSegmentIds = input.selectedSegmentIds.length ? new Set(input.selectedSegmentIds) : null;
+    const segments = script.segments.filter((segment) => !selectedSegmentIds || selectedSegmentIds.has(segment.id));
     if (!segments.length) throw new Error('AUDIO_SEGMENTS_REQUIRED');
-    const provider = createTtsProvider();
-    const profile = listVoiceProfiles().find((item) => item.id === input.voiceProfileId);
-    if (!profile || profile.voiceId !== input.voiceId) throw new Error('VOICE_PROFILE_INVALID');
-    await this.stage(run, 'TTS_GENERATION', noopOutputSchema, async () => {
+    const previous = await this.db.productionStage.findUnique({ where: { workspaceId_productionRunId_name: { workspaceId: run.workspaceId, productionRunId: run.id, name: 'TTS_GENERATION' } } });
+    if (previous?.status === 'SUCCEEDED' && !audioOutputSchema.safeParse(previous.output).success) {
+      const savedManifest = await this.db.renderManifest.findFirst({ where: { workspaceId: run.workspaceId, productionRunId: run.id, version: 1 } });
+      let restoredOutput: z.infer<typeof audioOutputSchema> | null = null;
+      if (savedManifest) {
+        const manifest = renderManifestSchema.parse(savedManifest.manifest);
+        if (manifest.storyVersionId !== version.id) throw new Error('RENDER_MANIFEST_CONFLICT');
+        const rows = await this.db.audioAsset.findMany({ where: { workspaceId: run.workspaceId, storyVersionId: version.id, mediaAssetId: { in: manifest.audioAssets.map((item) => item.assetId) } }, include: { mediaAsset: true } });
+        const audioAssetIds = manifest.audioAssets.map((item) => {
+          const row = rows.find((candidate) => candidate.segmentId === item.segmentId && candidate.mediaAsset.id === item.assetId);
+          if (!row) throw new Error('AUDIO_ASSET_MISSING');
+          return row.id;
+        });
+        restoredOutput = audioOutputSchema.parse({ ok: true, audioAssetIds });
+      }
+      await this.db.$transaction(async (tx) => {
+        await this.assertRunActive(tx, run, input);
+        if (restoredOutput) {
+          // A persisted manifest is authoritative when resuming an older render.
+          await tx.productionStage.update({ where: { workspaceId_productionRunId_name: { workspaceId: run.workspaceId, productionRunId: run.id, name: 'TTS_GENERATION' } }, data: { output: restoredOutput } });
+        } else {
+          await tx.productionStage.updateMany({ where: { workspaceId: run.workspaceId, productionRunId: run.id, name: { in: ['TTS_GENERATION', 'ASSET_PREPARATION', 'AUDIO_ALIGNMENT', 'SUBTITLE_GENERATION'] }, status: 'SUCCEEDED' }, data: { status: 'PENDING', output: Prisma.JsonNull, completedAt: null } });
+        }
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    }
+    const output = await this.stage(run, 'TTS_GENERATION', audioOutputSchema, async () => {
+      const provider = createTtsProvider();
+      const profile = listVoiceProfiles().find((item) => item.id === input.voiceProfileId);
+      if (!profile || profile.voiceId !== input.voiceId) throw new Error('VOICE_PROFILE_INVALID');
+      const audioAssetIds: string[] = [];
       for (const segment of segments) {
         const synthesisInput = { text: segment.text, language: script.language, voiceId: input.voiceId, speakingRate: input.speakingRate };
-        const cacheKey = createHash('sha256').update(`${version.id}:${audioCacheKey(synthesisInput, provider.id)}`).digest('hex');
+        const cacheKey = createHash('sha256').update(JSON.stringify([version.id, segment.id, audioCacheKey(synthesisInput, provider.id)])).digest('hex');
         const cached = await this.db.audioAsset.findFirst({ where: { workspaceId: run.workspaceId, cacheKey } });
-        if (cached) continue;
+        if (cached) { audioAssetIds.push(cached.id); continue; }
         await this.assertAutomationAction(run, !provider.id.includes('mock') && !provider.id.includes('local'));
         const result = await provider.synthesize(synthesisInput);
         const object = await this.store.put(run.workspaceId, result.audio);
-        await this.db.$transaction(async (tx) => {
+        const audioAssetId = await this.db.$transaction(async (tx) => {
           await this.assertRunActive(tx, run, input);
           const existing = await tx.audioAsset.findFirst({ where: { workspaceId: run.workspaceId, cacheKey } });
-          if (existing) return;
+          if (existing) return existing.id;
           const media = await tx.mediaAsset.upsert({
             where: { workspaceId_storageKey: { workspaceId: run.workspaceId, storageKey: object.storageKey } },
             create: { workspaceId: run.workspaceId, kind: 'AUDIO', storageKey: object.storageKey, checksum: object.checksum, mimeType: result.mimeType, metadata: { provider: result.provider, voiceId: result.voiceId, durationMs: result.durationMs, timingPrecision: result.timingPrecision, usageUnits: result.usageUnits, estimatedCostUsd: result.estimatedCostUsd } },
             update: {},
           });
-          await tx.audioAsset.create({ data: {
+          const audio = await tx.audioAsset.create({ data: {
             workspaceId: run.workspaceId, storyVersionId: version.id, mediaAssetId: media.id, segmentId: segment.id, voiceProfileId: profile.id,
             provider: result.provider, cacheKey, durationMs: result.durationMs, timingPrecision: result.timingPrecision, usageUnits: result.usageUnits, estimatedCostUsd: result.estimatedCostUsd,
           } });
+          return audio.id;
         }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+        audioAssetIds.push(audioAssetId);
       }
       await this.db.$transaction(async (tx) => {
         await this.assertRunActive(tx, run, input);
         await tx.storyProject.updateMany({ where: { id: run.story.id, workspaceId: run.workspaceId }, data: { status: 'AUDIO_READY' } });
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
-      return { ok: true };
+      return { ok: true, audioAssetIds };
     });
-    const actual = await this.db.audioAsset.findMany({ where: { workspaceId: run.workspaceId, storyVersionId: version.id }, select: { segmentId: true } });
-    if (input.mode !== 'AUDIO_ONLY' && script.segments.some((segment) => !actual.some((item) => item.segmentId === segment.id))) throw new Error('AUDIO_ASSET_MISSING');
-    const totalSeconds = await this.db.audioAsset.aggregate({ where: { workspaceId: run.workspaceId, storyVersionId: version.id }, _sum: { durationMs: true } });
-    if ((totalSeconds._sum.durationMs ?? 0) > this.config.MEDIA_MAX_RENDER_SECONDS * 1000) throw new Error('MEDIA_DURATION_EXCEEDED');
+    const rows = await this.db.audioAsset.findMany({ where: { workspaceId: run.workspaceId, storyVersionId: version.id, id: { in: output.audioAssetIds } }, include: { mediaAsset: true } });
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    const selected = output.audioAssetIds.map((id, index) => {
+      const row = byId.get(id);
+      if (!row || row.segmentId !== segments[index]?.id) throw new Error('AUDIO_ASSET_MISSING');
+      return row;
+    });
+    if (selected.length !== segments.length) throw new Error('AUDIO_ASSET_MISSING');
+    if (selected.reduce((total, row) => total + row.durationMs, 0) > this.config.MEDIA_MAX_RENDER_SECONDS * 1000) throw new Error('MEDIA_DURATION_EXCEEDED');
+    return selected;
   }
 
   private async createSubtitles(run: RunWithStory, input: ProductionInput, version: StoryVersion, script: StoryScript, alignment: z.infer<typeof alignmentOutputSchema>) {
@@ -337,9 +420,8 @@ export class MediaProductionPipeline {
     });
   }
 
-  private async alignAudio(run: RunWithStory, input: ProductionInput, version: StoryVersion, script: StoryScript) {
+  private async alignAudio(run: RunWithStory, input: ProductionInput, script: StoryScript, audio: SelectedAudio[]) {
     return this.stage(run, 'AUDIO_ALIGNMENT', alignmentOutputSchema, async () => {
-      const audio = await this.db.audioAsset.findMany({ where: { workspaceId: run.workspaceId, storyVersionId: version.id } });
       const bySegment = new Map(audio.map((item) => [item.segmentId, item]));
       let cursorMs = 0;
       const segments = script.segments.map((segment) => {
@@ -355,12 +437,9 @@ export class MediaProductionPipeline {
     });
   }
 
-  private async prepareAssets(run: RunWithStory, input: ProductionInput, version: StoryVersion, script: StoryScript) {
+  private async prepareAssets(run: RunWithStory, input: ProductionInput, script: StoryScript, audio: SelectedAudio[]) {
     await this.stage(run, 'ASSET_PREPARATION', assetPreparationOutputSchema, async () => {
-      const [audio, background] = await Promise.all([
-        this.db.audioAsset.findMany({ where: { workspaceId: run.workspaceId, storyVersionId: version.id }, include: { mediaAsset: true } }),
-        input.backgroundAssetId ? this.db.mediaAsset.findFirst({ where: { id: input.backgroundAssetId, workspaceId: run.workspaceId, kind: 'BACKGROUND' } }) : Promise.resolve(null),
-      ]);
+      const background = input.backgroundAssetId ? await this.db.mediaAsset.findFirst({ where: { id: input.backgroundAssetId, workspaceId: run.workspaceId, kind: 'BACKGROUND' } }) : null;
       const bySegment = new Set(audio.map((item) => item.segmentId));
       if (script.segments.some((segment) => !bySegment.has(segment.id))) throw new Error('AUDIO_ASSET_MISSING');
       if (input.backgroundAssetId && (!background || !validBackgroundRights(background.rightsMetadata))) throw new Error('BLOCKED_RIGHTS');
@@ -395,11 +474,10 @@ export class MediaProductionPipeline {
     });
   }
 
-  private async createManifest(run: RunWithStory, input: ProductionInput, version: StoryVersion, script: StoryScript) {
+  private async createManifest(run: RunWithStory, input: ProductionInput, version: StoryVersion, script: StoryScript, audio: SelectedAudio[]) {
     const existingStage = await this.db.productionStage.findUnique({ where: { workspaceId_productionRunId_name: { workspaceId: run.workspaceId, productionRunId: run.id, name: 'MANIFEST_CREATION' } } });
     if (existingStage?.status === 'SUCCEEDED') return manifestOutputSchema.parse(existingStage.output);
     const existing = await this.db.renderManifest.findFirst({ where: { workspaceId: run.workspaceId, productionRunId: run.id, version: 1 } });
-    const audio = await this.db.audioAsset.findMany({ where: { workspaceId: run.workspaceId, storyVersionId: version.id }, include: { mediaAsset: true } });
     const bySegment = new Map(audio.map((item) => [item.segmentId, item]));
     const audioItems = script.segments.map((segment) => {
       const item = bySegment.get(segment.id);
@@ -434,14 +512,11 @@ export class MediaProductionPipeline {
     return output;
   }
 
-  private async render(run: RunWithStory, input: ProductionInput, version: StoryVersion, script: StoryScript, manifestOutput: z.infer<typeof manifestOutputSchema>) {
+  private async render(run: RunWithStory, input: ProductionInput, manifestOutput: z.infer<typeof manifestOutputSchema>, audioRows: SelectedAudio[]) {
     return this.stage(run, 'VIDEO_RENDER', videoOutputSchema, async () => {
       const stored = await this.db.video.findFirst({ where: { id: manifestOutput.videoId, workspaceId: run.workspaceId }, include: { mediaAsset: true } });
       if (stored?.mediaAsset) return { videoId: stored.id, mediaAssetId: stored.mediaAsset.id };
-      const [audioRows, background] = await Promise.all([
-        this.db.audioAsset.findMany({ where: { workspaceId: run.workspaceId, storyVersionId: version.id }, include: { mediaAsset: true } }),
-        input.backgroundAssetId ? this.db.mediaAsset.findFirst({ where: { id: input.backgroundAssetId, workspaceId: run.workspaceId, kind: 'BACKGROUND' } }) : Promise.resolve(null),
-      ]);
+      const background = input.backgroundAssetId ? await this.db.mediaAsset.findFirst({ where: { id: input.backgroundAssetId, workspaceId: run.workspaceId, kind: 'BACKGROUND' } }) : null;
       await this.assertRights(run, input);
       if (input.backgroundAssetId && !background) throw new Error('BLOCKED_RIGHTS');
       const audioSources: Record<string, string> = {};
@@ -459,6 +534,8 @@ export class MediaProductionPipeline {
       };
       const directory = await mkdtemp(path.join(os.tmpdir(), 'sf-render-'));
       const outputPath = path.join(directory, 'video.mp4');
+      const controller = new AbortController();
+      const watcher = this.watchRender(run, controller);
       try {
         let lastProgressAt = 0;
         let pending = Promise.resolve();
@@ -466,8 +543,13 @@ export class MediaProductionPipeline {
         const metadata = await renderVideo(compositionInput, outputPath, ({ progress }) => {
           if (Date.now() - lastProgressAt < 1500 && progress < 0.99) return;
           lastProgressAt = Date.now();
-          pending = pending.then(async () => { await this.db.renderJob.updateMany({ where: { workspaceId: run.workspaceId, productionRunId: run.id }, data: { progress: Math.min(0.95, 0.65 + progress * 0.3) } }); });
-        });
+          pending = pending.then(async () => {
+            await this.db.$transaction(async (tx) => {
+              await this.assertAttemptActive(tx, run);
+              await tx.renderJob.updateMany({ where: { workspaceId: run.workspaceId, productionRunId: run.id, status: 'RUNNING', attempts: run.attempts }, data: { progress: Math.min(0.95, 0.65 + progress * 0.3) } });
+            });
+          }).catch((error: unknown) => { controller.abort(new Error(errorCode(error))); });
+        }, { signal: controller.signal, timeoutMs: this.config.MEDIA_RENDER_TIMEOUT_MS });
         await pending;
         await this.assertAutomationAction(run, false);
         const bytes = await readFile(outputPath);
@@ -485,14 +567,13 @@ export class MediaProductionPipeline {
           await tx.renderJob.updateMany({ where: { workspaceId: run.workspaceId, productionRunId: run.id }, data: { videoId: video.id, status: 'RUNNING', progress: 0.98 } });
           return { videoId: video.id, mediaAssetId: asset.id };
         }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
-      } finally { await rm(directory, { recursive: true, force: true }); }
+      } finally { await watcher.stop(); await rm(directory, { recursive: true, force: true }); }
     });
   }
 
   private async startStage(run: RunWithStory, name: string) {
     return this.db.$transaction(async (tx) => {
-      const active = await tx.productionRun.findFirst({ where: { id: run.id, workspaceId: run.workspaceId, status: 'RUNNING', attempts: run.attempts, workerLeaseUntil: { gt: new Date() } }, select: { id: true } });
-      if (!active) throw new Error('WORKER_LEASE_LOST');
+      await this.assertAttemptActive(tx, run);
       const stage = await tx.productionStage.upsert({
         where: { workspaceId_productionRunId_name: { workspaceId: run.workspaceId, productionRunId: run.id, name } },
         create: { workspaceId: run.workspaceId, productionRunId: run.id, name, status: 'RUNNING', attempts: 1, startedAt: new Date() },
@@ -506,18 +587,20 @@ export class MediaProductionPipeline {
   private async stage<T extends Record<string, unknown>>(run: RunWithStory, name: string, schema: z.ZodType<T>, work: () => Promise<T>): Promise<T> {
     const previous = await this.db.productionStage.findUnique({ where: { workspaceId_productionRunId_name: { workspaceId: run.workspaceId, productionRunId: run.id, name } } });
     if (previous?.status === 'SUCCEEDED') return schema.parse(previous.output);
-    await this.startStage(run, name);
+    const attempt = await this.startStage(run, name);
     try {
       const output = schema.parse(await work());
       await this.db.$transaction(async (tx) => {
-        const currentRun = await tx.productionRun.findFirst({ where: { id: run.id, workspaceId: run.workspaceId, status: 'RUNNING', attempts: run.attempts, workerLeaseUntil: { gt: new Date() } }, select: { id: true } });
-        if (!currentRun) throw new Error('BLOCKED_RIGHTS');
-        await tx.productionStage.update({ where: { workspaceId_productionRunId_name: { workspaceId: run.workspaceId, productionRunId: run.id, name } }, data: { status: 'SUCCEEDED', output: asInputJson(output), completedAt: new Date(), errorCode: null } });
+        await this.assertAttemptActive(tx, run);
+        await tx.productionStage.updateMany({ where: { workspaceId: run.workspaceId, productionRunId: run.id, name, attempts: attempt.attempts }, data: { status: 'SUCCEEDED', output: asInputJson(output), completedAt: new Date(), errorCode: null } });
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
       return output;
     } catch (error) {
       const code = errorCode(error);
-      await this.db.productionStage.updateMany({ where: { workspaceId: run.workspaceId, productionRunId: run.id, name }, data: { status: 'FAILED', errorCode: code, completedAt: new Date() } });
+      await this.db.$transaction(async (tx) => {
+        const active = await tx.productionRun.findFirst({ where: { id: run.id, workspaceId: run.workspaceId, status: 'RUNNING', attempts: run.attempts, workerLeaseUntil: { gt: new Date() } }, select: { id: true } });
+        if (active) await tx.productionStage.updateMany({ where: { workspaceId: run.workspaceId, productionRunId: run.id, name, status: 'RUNNING', attempts: attempt.attempts }, data: { status: 'FAILED', errorCode: code, completedAt: new Date() } });
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
       throw error;
     }
   }

@@ -53,6 +53,8 @@ Host local objects use `.data/objects`; Compose uses the `local-objects` volume 
 
 ## First editorial workflow
 
+The combined local `/export` workflow is documented in [the Vietnamese local export guide](16-LOCAL-EXPORT.md). New `local:up` environments now select local speech; existing `.env` files are preserved, so switch `TTS_PROVIDER=mock` to `local` manually when narration is required.
+
 1. Open the dashboard and choose **Create account**. Use a private password of at least 12 characters. A new account has no workspace until you create one.
 2. Create a workspace. Its creator receives `OWNER`; choose the active workspace using the workspace switcher.
 3. Add a channel in `/channels` and set its minimum candidate score. In `/sources`, add a `MANUAL` source in **Synthetic demo discovery** mode to try pagination, comments, metrics, scoring and sync history. The fixtures are labeled synthetic and contain no real social posts. Other source types remain disabled and visibly `BLOCKED_EXTERNAL` until approved adapters exist.
@@ -125,6 +127,9 @@ Protected content/workspace mutations accept `Idempotency-Key`. Replaying the sa
 | `pnpm build` | Check application/package builds and build the Next.js dashboard |
 | `pnpm test:browser` | Run the Playwright browser suite |
 | `pnpm smoke:autopilot` | Run the database-backed synthetic Autopilot slice and render a sample video |
+| `pnpm local:export` | Start local manual export with offline speech; see docs/16-LOCAL-EXPORT.md |
+| `pnpm smoke:phase6` | Test real queued/running cancellation, timeout, retry, history and MP4 download on a dedicated test database |
+| `pnpm test:ui` | Run UI stability, Phase5 and local export browser regressions; see docs/18-UI-STABILITY-REPORT.md |
 
 The committed baseline is `prisma/migrations/20261026000000_initial/migration.sql`. Phase 3 schema changes are additive in `prisma/migrations/20261027000000_phase3_media/migration.sql`; Phase 5 adds automation/analytics tables and indexes in `prisma/migrations/20261028000000_phase5_autopilot/migration.sql`. Deploy with `pnpm db:deploy` before starting the updated API or workers.
 
@@ -139,7 +144,7 @@ pnpm exec playwright install chromium
 pnpm test:browser
 ```
 
-Browser checks start separate local API/web processes on ports 3003/3002. They require PostgreSQL and the configured schema to be available. CI generates the client, runs schema/lint/type/unit checks, PostgreSQL integration tests and application builds, deploys the development test schema, installs Chromium and runs browser checks. It uploads the browser report and screenshots. Adding a workflow file does not itself constitute a completed remote CI run.
+Browser checks start separate local API/web processes on ports 3003/3002. They require PostgreSQL and the configured schema to be available. Windows can use detected Chrome/Edge or `PLAYWRIGHT_CHROMIUM_EXECUTABLE`; CI installs Chromium. Root browser artifacts use `test-results/phase-one-browser/`. CI also runs the mocked local export suite and `pnpm smoke:phase6` (isolated test database, real renderer, mock tone), and uploads test results. See [Phase 6](17-PHASE-6-REPORT.md) for history/cancel/deadline/recovery checks. Adding a workflow file does not itself constitute a completed remote CI run.
 
 ## Optional demo seed
 

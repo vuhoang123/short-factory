@@ -121,6 +121,8 @@ class ProductionController {
   @Post('stories/:id/regenerate') regenerate(@Req() request: Request, @Param('id') id: string, @Body() body: unknown) { z.string().uuid().parse(id); return this.production.regenerateStory(request, id, body); }
   @Post('stories/:id/audio') audio(@Req() request: Request, @Param('id') id: string, @Body() body: unknown) { z.string().uuid().parse(id); return this.production.requestAudio(request, id, body); }
   @Get('production-runs/:id') run(@Req() request: Request, @Param('id') id: string) { z.string().uuid().parse(id); return this.production.productionRun(request, id); }
+  @Get('production-runs') runs(@Req() request: Request, @Query() query: unknown) { return this.production.productionRuns(request, query); }
+  @Post('production-runs/:id/cancel') cancelRun(@Req() request: Request, @Param('id') id: string, @Body() body: unknown) { z.string().uuid().parse(id); return this.production.cancelRun(request, id, body); }
   @Post('production-runs/:id/retry') retry(@Req() request: Request, @Param('id') id: string) { z.string().uuid().parse(id); return this.production.retryRun(request, id); }
   @Get('videos') videos(@Req() request: Request) { return this.production.videos(request); }
   @Get('videos/:id') video(@Req() request: Request, @Param('id') id: string) { z.string().uuid().parse(id); return this.production.video(request, id); }

@@ -2,12 +2,12 @@ import { randomUUID } from 'node:crypto';
 import sharp from 'sharp';
 import { expect, it } from 'vitest';
 import { prepareBackgroundImage } from './background.js';
-import { productionInputSchema, type ProductionInput } from './contracts.js';
+import { productionInputSchema, storyScriptSchema, type ProductionInput } from './contracts.js';
 import { createRenderManifest } from './manifest.js';
 import { DeterministicMockScriptProvider, assertGroundedScript } from './script.js';
 import { generateSubtitleTrack } from './subtitles.js';
 import { ProviderMetadataAlignmentProvider } from './alignment.js';
-import { MockTtsProvider } from './tts.js';
+import { MockTtsProvider, OpenAiTtsProvider } from './tts.js';
 
 const source = {
   id: '00000000-0000-4000-8000-000000000101', platform: 'MANUAL' as const,
@@ -38,6 +38,19 @@ it('allows a shortened verbatim comment only when it is an exact excerpt of the 
   const result = await new DeterministicMockScriptProvider().generate({ source, language: 'en', targetDurationSec: 20, style: 'STORYTELLING' });
   expect(result.script.segments.find((segment) => segment.type === 'COMMENT')?.text.length).toBeLessThan(source.comments[0]!.body.length);
   expect(() => assertGroundedScript(result.script, source)).not.toThrow();
+});
+
+it.each(['PARAPHRASE', 'ORIGINAL_COMMENTARY'] as const)('rejects invented comments disguised as %s', async (narrationType) => {
+  const result = await new DeterministicMockScriptProvider().generate({ source, language: 'vi', targetDurationSec: 30, style: 'STORYTELLING' });
+  const fabricated = { ...result.script, segments: result.script.segments.map((segment) => segment.type === 'COMMENT' ? { ...segment, text: 'Invented quote', narrationType } : segment) };
+  expect(() => assertGroundedScript(fabricated, source)).toThrow('SCRIPT_VERBATIM_COMMENT_MISMATCH');
+  expect(storyScriptSchema.safeParse(fabricated).success).toBe(false);
+});
+
+it('includes the configured speech model in the provider identity used for caching', () => {
+  const first = new OpenAiTtsProvider('unused-test-key', 'model-one', null);
+  const second = new OpenAiTtsProvider('unused-test-key', 'model-two', null);
+  expect(first.id).not.toBe(second.id);
 });
 
 it('creates deterministic word-timed Vietnamese captions from actual segment durations', async () => {

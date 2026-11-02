@@ -90,6 +90,7 @@ export class DiscoveryPipeline {
   private async sync(workspaceId: string, runId: string): Promise<void> {
     const run = await this.db.sourceSyncRun.findFirst({ where: { id: runId, workspaceId }, include: { source: true } });
     if (!run) return;
+    if (['SUCCEEDED', 'PARTIAL', 'FAILED', 'CANCELLED'].includes(run.status)) return;
     const source = run.source;
     const sourceConfig = configSchema.parse(asObject(source.config));
     if (!source.enabled) throw new Error('SOURCE_DISABLED');

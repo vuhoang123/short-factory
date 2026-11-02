@@ -119,7 +119,7 @@ export function assertGroundedScript(script: StoryScript, source: ScriptSource):
     if (segment.type === 'COMMENT') {
       if (segment.sourceRefs.length !== 1 || !comments.has(segment.sourceRefs[0] ?? '')) throw new Error('SCRIPT_COMMENT_REFERENCE_REQUIRED');
       const sourceComment = comments.get(segment.sourceRefs[0] ?? '') ?? '';
-      if (segment.narrationType === 'VERBATIM' && !sourceComment.includes(segment.text)) throw new Error('SCRIPT_VERBATIM_COMMENT_MISMATCH');
+      if (segment.narrationType !== 'VERBATIM' || !sourceComment.includes(segment.text)) throw new Error('SCRIPT_VERBATIM_COMMENT_MISMATCH');
     }
     if (segment.narrationType === 'VERBATIM' && segment.type !== 'COMMENT' && !exactSourceText.has(segment.text)) throw new Error('SCRIPT_VERBATIM_SOURCE_MISMATCH');
     if (segment.narrationType === 'PARAPHRASE' && segment.sourceRefs.length === 0) throw new Error('SCRIPT_PARAPHRASE_SOURCE_REQUIRED');

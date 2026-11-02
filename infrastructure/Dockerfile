@@ -49,7 +49,7 @@ USER node
 CMD ["pnpm", "--filter", "@shorts-factory/discovery-worker", "start"]
 
 FROM base AS media-worker
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg chromium espeak-ng fonts-noto-core fonts-noto-cjk libnss3 libatk1.0-0 libatk-bridge2.0-0 libgbm1 libxkbcommon0 libasound2 libxshmfence1 libxcomposite1 libxdamage1 libxrandr2 libxfixes3 libx11-xcb1 libdrm2 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg chromium espeak-ng procps fonts-noto-core fonts-noto-cjk libnss3 libatk1.0-0 libatk-bridge2.0-0 libgbm1 libxkbcommon0 libasound2 libxshmfence1 libxcomposite1 libxdamage1 libxrandr2 libxfixes3 libx11-xcb1 libdrm2 && rm -rf /var/lib/apt/lists/*
 ENV REMOTION_BROWSER_EXECUTABLE=/usr/bin/chromium
 RUN pnpm --filter @shorts-factory/media-worker typecheck
 RUN mkdir -p /app/.data/objects && chown -R node:node /app/.data

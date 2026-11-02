@@ -30,6 +30,11 @@ export const regenerateStorySchema = z.object({
 export const audioRequestSchema = z.object({ segmentIds: z.array(z.string().min(1).max(100)).max(30).optional(), voiceProfileId: voice.optional(), speakingRate: z.number().min(0.5).max(2).optional() }).strict();
 export const renderRequestSchema = z.object({ templateId: z.enum(['RedditStory', 'SocialCommentary']).optional(), backgroundAssetId: id.nullable().optional(), subtitlePreset: subtitlePresetSchema.optional(), theme: z.enum(['dark', 'light']).optional(), anonymizeAuthors: z.boolean().optional(), showEngagement: z.boolean().optional() }).strict();
 export const videoReviewSchema = z.object({ decision: z.enum(['APPROVED', 'REJECTED']) }).strict();
+export const productionRunQuerySchema = z.object({
+  cursor: id.optional(), limit: z.coerce.number().int().min(1).max(100).default(20),
+  status: z.enum(['QUEUED', 'RUNNING', 'SUCCEEDED', 'FAILED_RETRYABLE', 'FAILED_PERMANENT', 'CANCELLED', 'BLOCKED_RIGHTS', 'BLOCKED_EXTERNAL']).optional(),
+}).strict();
+export const cancelRunSchema = z.object({}).strict();
 export const backgroundUploadSchema = z.object({
   name: z.string().trim().min(1).max(120),
   basis: z.enum(['OWNED', 'LICENSED', 'CONSENTED']),

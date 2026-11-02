@@ -1,11 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Player } from '@remotion/player';
 import { StoryComposition } from '@shorts-factory/media/composition';
 import { renderManifestSchema, storyScriptSchema } from '@shorts-factory/media/contracts';
 import { z } from 'zod';
 import { api, errorMessage } from '../lib/api';
+import { useResource } from '../lib/use-resource';
 import { candidateSchema, channelSchema, mayAdmin, mayEdit, mayReview, paginated, unknownResponseSchema } from '../lib/contracts';
 import { useSession } from './app-shell';
 import { EmptyState, ErrorNotice } from './feedback';
@@ -24,20 +25,6 @@ const createResultSchema = z.object({ runId: z.string(), storyProjectId: z.strin
 const uploadResultSchema = z.object({ id: z.string(), url: z.string() });
 const reviewResultSchema = z.object({ videoId: z.string(), status: z.string(), reviewStatus: z.string() });
 
-function useResource<T extends z.ZodTypeAny>(path: string, schema: T) {
-  const [data, setData] = useState<z.infer<T> | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [revision, setRevision] = useState(0);
-  const reload = useCallback(() => setRevision((value) => value + 1), []);
-  useEffect(() => {
-    let active = true;
-    setLoading(true); setError('');
-    void api(path, schema).then((value) => { if (active) setData(value); }).catch((failure: unknown) => { if (active) setError(errorMessage(failure)); }).finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
-  }, [path, schema, revision]);
-  return { data, loading, error, reload };
-}
 
 export function StoryStudio() {
   const { role } = useSession();
@@ -58,6 +45,7 @@ export function StoryStudio() {
   const [storyId, setStoryId] = useState('');
   const [activeVideoId, setActiveVideoId] = useState('');
   const [run, setRun] = useState<z.infer<typeof runSchema> | null>(null);
+  const [runError, setRunError] = useState('');
   const [story, setStory] = useState<z.infer<typeof storySchema> | null>(null);
   const [video, setVideo] = useState<z.infer<typeof videoSchema> | null>(null);
   const [editedText, setEditedText] = useState<Record<string, string>>({});
@@ -89,25 +77,30 @@ export function StoryStudio() {
   useEffect(() => {
     if (!runId) { setRun(null); return; }
     let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const controller = new AbortController();
+    setRun(null); setRunError('');
     const poll = async () => {
+      let keepPolling = true;
       try {
-        const next = await api(`/production-runs/${runId}`, runSchema);
+        const next = await api(`/production-runs/${runId}`, runSchema, { signal: controller.signal });
         if (!active) return;
-        setRun(next);
+        setRun(next); setRunError('');
         const outputVideo = next.videos.find((item) => item.mediaAsset)?.id;
         if (outputVideo) setActiveVideoId(outputVideo);
-        if (next.status === 'SUCCEEDED' || next.status.startsWith('FAILED') || next.status.startsWith('BLOCKED')) return;
-        window.setTimeout(() => { void poll(); }, 1600);
-      } catch (failure) { if (active) setError(errorMessage(failure)); }
+        keepPolling = next.status !== 'SUCCEEDED' && next.status !== 'CANCELLED' && !next.status.startsWith('FAILED') && !next.status.startsWith('BLOCKED');
+      } catch (failure) { if (active) setRunError(errorMessage(failure)); }
+      finally { if (active && keepPolling) timer = setTimeout(() => { void poll(); }, 1600); }
     };
     void poll();
-    return () => { active = false; };
+    return () => { active = false; controller.abort(); if (timer) clearTimeout(timer); };
   }, [runId, runRevision]);
 
   useEffect(() => {
     if (!storyId) { setStory(null); return; }
     let active = true;
-    void api(`/stories/${storyId}`, storySchema).then((value) => {
+    const controller = new AbortController();
+    void api(`/stories/${storyId}`, storySchema, { signal: controller.signal }).then((value) => {
       if (!active) return;
       setStory(value);
       const current = value.versions[0]?.script.segments ?? [];
@@ -115,14 +108,15 @@ export function StoryStudio() {
       setSegmentOrder(current.map((segment) => segment.id));
       setCompareVersionId(value.versions[1]?.id ?? '');
     }).catch((failure: unknown) => { if (active) setError(errorMessage(failure)); });
-    return () => { active = false; };
+    return () => { active = false; controller.abort(); };
   }, [storyId, run?.status]);
 
   useEffect(() => {
     if (!activeVideoId) { setVideo(null); return; }
     let active = true;
-    void api(`/videos/${activeVideoId}`, videoSchema).then((value) => { if (active) { setVideo(value); setStoryId(value.story?.id ?? ''); } }).catch((failure: unknown) => { if (active) setError(errorMessage(failure)); });
-    return () => { active = false; };
+    const controller = new AbortController();
+    void api(`/videos/${activeVideoId}`, videoSchema, { signal: controller.signal }).then((value) => { if (active) { setVideo(value); setStoryId(value.story?.id ?? ''); } }).catch((failure: unknown) => { if (active) setError(errorMessage(failure)); });
+    return () => { active = false; controller.abort(); };
   }, [activeVideoId, run?.status]);
 
   const compatibleProfiles = useMemo(() => profiles.data?.items.filter((profile) => profile.language === 'multilingual' || profile.language.toLowerCase() === (selectedChannel?.language ?? 'vi').slice(0, 2).toLowerCase()) ?? [], [profiles.data, selectedChannel?.language]);
@@ -264,11 +258,11 @@ export function StoryStudio() {
   if (!canEdit && !canReview) return <><div className="page-heading"><div><span className="eyebrow">PHASE 3 · MEDIA</span><h1>Story studio</h1></div></div><div className="notice">A workspace editor or reviewer can access the production studio.</div></>;
   return <>
     <div className="page-heading"><div><span className="eyebrow">PHASE 3 · MEDIA WORKFLOW</span><h1>Story studio</h1><p>Turn an approved source into a narrated vertical video, then review and refine it before use.</p></div><span className="badge neutral">Human review required</span></div>
-    {error && <ErrorNotice message={error} />}{notice && <div className="notice success" role="status">{notice}</div>}
+    {error && <ErrorNotice message={error} />}{runError && <ErrorNotice message={runError} />}{notice && <div className="notice success" role="status">{notice}</div>}
     {canEdit && <div className="studio-grid">
       <section className="panel form-panel studio-setup"><h2>Build a video</h2><p className="muted">Only candidates with approved rights and safety review appear here.</p>
         {candidates.error && <ErrorNotice message={candidates.error} retry={candidates.reload} />}
-        {candidates.loading ? <p role="status" className="loading-state">Loading approved stories…</p> : !candidates.data?.items.length ? <EmptyState title="No approved stories yet">Review rights and approve a candidate before producing a video.</EmptyState> : <form className="form-stack" onSubmit={createProduction}>
+        {candidates.loading && !candidates.data ? <p role="status" className="loading-state">Loading approved stories…</p> : !candidates.data?.items.length ? <EmptyState title="No approved stories yet">Review rights and approve a candidate before producing a video.</EmptyState> : <form className="form-stack" onSubmit={createProduction}>
           <label>Approved source story<select value={candidateId} onChange={(event) => setCandidateId(event.target.value)}>{candidates.data.items.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.post.title || candidate.post.body.slice(0, 74)} · score {candidate.score ?? '—'}</option>)}</select></label>
           {selectedCandidate && <div className="studio-source"><strong>{selectedCandidate.post.title || 'Source post'}</strong><p>{selectedCandidate.post.body}</p><span className="field-help">{selectedCandidate.post.platform} · rights approved · score {selectedCandidate.score ?? '—'}</span></div>}
           <div><h3 className="studio-label">Choose comments to include</h3>{selectedCandidate?.post.comments?.length ? <div className="studio-comments">{selectedCandidate.post.comments.map((comment) => <label className="checkbox-label studio-comment" key={comment.id}><input type="checkbox" checked={commentIds.includes(comment.id)} onChange={(event) => setCommentIds((current) => event.target.checked ? [...current, comment.id].slice(0, 8) : current.filter((id) => id !== comment.id))} /><span>{comment.body}</span></label>)}</div> : <p className="field-help">This source has no comments.</p>}</div>
@@ -302,6 +296,6 @@ export function StoryStudio() {
     {video && <section className="panel studio-preview"><div className="panel-heading"><div><h2>Video preview</h2><p>{video.title} · {video.durationMs ? `${Math.round(video.durationMs / 1000)} sec` : 'render in progress'} · {video.width ?? '—'} × {video.height ?? '—'} · {video.fps ?? '—'} fps</p></div><div className="studio-preview-actions"><span className={`badge ${video.reviewStatus === 'APPROVED' ? 'positive' : video.reviewStatus === 'REJECTED' || video.reviewStatus === 'BLOCKED' ? 'negative' : 'neutral'}`}>{video.reviewStatus.replaceAll('_', ' ')}</span>{canEdit && <button className="button secondary small" onClick={() => void renderLatest()} disabled={busy}>Render latest script</button>}{canReview && video.reviewStatus === 'PENDING' && video.mediaAsset && <><button className="button secondary small" onClick={() => void decideReview('REJECTED')} disabled={busy}>Reject video</button><button className="button small" onClick={() => void decideReview('APPROVED')} disabled={busy}>Approve video</button></>}{video.mediaAsset && <a className="button small" href={`/api/v1/media/${video.mediaAsset.id}?download=1`}>Download MP4</a>}</div></div>
       {video.mediaAsset && <div className="studio-player-column"><video className="studio-html-video" controls playsInline preload="metadata" src={`/api/v1/media/${video.mediaAsset.id}`} /><details className="studio-remotion-preview"><summary>Open editable composition preview</summary>{preview && <Player component={StoryComposition} inputProps={preview.inputProps} durationInFrames={preview.manifest.durationFrames} compositionWidth={1080} compositionHeight={1920} fps={30} controls style={{ width: '100%', maxHeight: 740, aspectRatio: '9 / 16' }} />}</details></div>}
     </section>}
-    <section className="panel studio-video-list"><div className="panel-heading"><div><h2>Review queue</h2><p>Generated videos stay pending until a workspace reviewer records a decision.</p></div><button className="text-button" onClick={videos.reload}>Refresh</button></div>{videos.loading ? <p role="status" className="loading-state">Loading videos…</p> : videos.error ? <ErrorNotice message={videos.error} retry={videos.reload} /> : videos.data?.items.length ? <div className="table-scroll"><table><thead><tr><th>Video</th><th>Status</th><th>Review</th><th>Duration</th><th>Output</th></tr></thead><tbody>{videos.data.items.map((item) => <tr key={item.id}><td><button className="text-button" onClick={() => setActiveVideoId(item.id)}>{item.title}</button></td><td>{item.status}</td><td>{item.reviewStatus}</td><td>{item.durationMs ? `${Math.round(item.durationMs / 1000)} sec` : '—'}</td><td>{item.mediaAssetId ? <a className="text-button" href={`/api/v1/media/${item.mediaAssetId}?download=1`}>MP4 ↓</a> : 'Rendering'}</td></tr>)}</tbody></table></div> : <EmptyState title="No videos to review">Generated outputs will appear here when their render and media checks complete.</EmptyState>}</section>
+    <section className="panel studio-video-list"><div className="panel-heading"><div><h2>Review queue</h2><p>Generated videos stay pending until a workspace reviewer records a decision.</p></div><button className="text-button" onClick={videos.reload}>Refresh</button></div>{videos.loading && !videos.data ? <p role="status" className="loading-state">Loading videos…</p> : videos.error ? <ErrorNotice message={videos.error} retry={videos.reload} /> : videos.data?.items.length ? <div className="table-scroll"><table><thead><tr><th>Video</th><th>Status</th><th>Review</th><th>Duration</th><th>Output</th></tr></thead><tbody>{videos.data.items.map((item) => <tr key={item.id}><td><button className="text-button" onClick={() => setActiveVideoId(item.id)}>{item.title}</button></td><td>{item.status}</td><td>{item.reviewStatus}</td><td>{item.durationMs ? `${Math.round(item.durationMs / 1000)} sec` : '—'}</td><td>{item.mediaAssetId ? <a className="text-button" href={`/api/v1/media/${item.mediaAssetId}?download=1`}>MP4 ↓</a> : 'Rendering'}</td></tr>)}</tbody></table></div> : <EmptyState title="No videos to review">Generated outputs will appear here when their render and media checks complete.</EmptyState>}</section>
   </>;
 }

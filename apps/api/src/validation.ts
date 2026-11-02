@@ -42,6 +42,7 @@ export const topicRuleSchema = z.object({
 }).strict();
 export const updateTopicRuleSchema = topicRuleSchema.omit({ workspaceId: true, channelId: true }).partial().strict();
 export const candidateQuerySchema = z.object({
+  sourcePostId: id.optional(),
   cursor: id.optional(), limit: z.coerce.number().int().min(1).max(100).default(25), q: z.string().trim().max(200).optional(),
   platform: z.enum(['MANUAL', 'REDDIT', 'THREADS', 'FACEBOOK']).optional(), topic: z.string().trim().max(80).optional(),
   minScore: z.coerce.number().min(0).max(100).optional(), rightsStatus: z.enum(['PENDING', 'APPROVED', 'REJECTED', 'BLOCKED']).optional(),

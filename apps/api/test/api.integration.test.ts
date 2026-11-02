@@ -208,6 +208,11 @@ integration('Phase 2 PostgreSQL discovery and rights vertical slice', () => {
     expect(list.status).toBe(200);
     expect(list.body.items).toHaveLength(1);
     const candidateId = list.body.items[0].id as string;
+    const filtered = await ownerA.get(`${prefix}/candidates?sourcePostId=${postId}&limit=1`);
+    expect(filtered.status).toBe(200);
+    expect(filtered.body.items.map((item: { id: string }) => item.id)).toEqual([candidateId]);
+    expect((await ownerB.get(`${prefix}/candidates?sourcePostId=${postId}&limit=1`)).body.items).toEqual([]);
+    expect((await ownerA.get(`${prefix}/candidates?sourcePostId=invalid`)).status).toBe(400);
     expect((await ownerB.get(`${prefix}/candidates`)).body.items).toEqual([]);
     expect((await post(ownerB, `/candidates/${candidateId}/review`, { decision: 'REJECTED' })).status).toBe(404);
   });
@@ -295,6 +300,52 @@ integration('Phase 2 PostgreSQL discovery and rights vertical slice', () => {
     expect((await ownerB.get(`${prefix}/stories/${first.body.storyProjectId}`)).status).toBe(404);
     expect((await ownerB.get(`${prefix}/videos`)).body.items).toEqual([]);
     expect((await ownerA.get(`${prefix}/production-runs/${first.body.runId}`)).body.status).toBe('QUEUED');
+  });
+
+  it('lists paginated production history without exposing other workspaces', async () => {
+    const story = await db.storyProject.findFirstOrThrow({ where: { workspaceId: workspaceA, sourcePostId: postId } });
+    const run = await db.productionRun.findFirstOrThrow({ where: { workspaceId: workspaceA, storyProjectId: story.id } });
+    const extra = await db.productionRun.create({ data: { workspaceId: workspaceA, storyProjectId: story.id, requestedById: run.requestedById, input: run.input!, idempotencyKey: randomUUID(), status: 'SUCCEEDED', completedAt: new Date() } });
+    const page = await viewer.get(`${prefix}/production-runs?limit=1`);
+    expect(page.status).toBe(200);
+    expect(page.body.items).toHaveLength(1);
+    expect(page.body.nextCursor).toBeTruthy();
+    expect(page.body.items[0]).toMatchObject({ sourcePostId: postId, channelId: story.channelId });
+    expect(page.body.items[0]).not.toHaveProperty('input');
+    expect(page.body.items[0]).not.toHaveProperty('workspaceId');
+    const next = await viewer.get(`${prefix}/production-runs?limit=1&cursor=${page.body.nextCursor}`);
+    expect(next.status).toBe(200);
+    expect(next.body.items[0].id).not.toBe(page.body.items[0].id);
+    expect((await ownerA.get(`${prefix}/production-runs?status=SUCCEEDED`)).body.items.map((item: { id: string }) => item.id)).toContain(extra.id);
+    expect((await ownerB.get(`${prefix}/production-runs`)).body.items).toEqual([]);
+    expect((await ownerB.get(`${prefix}/production-runs?cursor=${run.id}`)).status).toBe(404);
+    expect((await ownerA.get(`${prefix}/production-runs?status=invalid`)).status).toBe(400);
+    expect((await post(editor, `/production-runs/${extra.id}/cancel`, {})).status).toBe(409);
+  });
+
+  it('cancels queued and running renders idempotently with tenant and role enforcement', async () => {
+    const base = await db.productionRun.findFirstOrThrow({ where: { workspaceId: workspaceA, status: 'QUEUED' } });
+    const runId = base.id;
+    expect((await post(ownerB, `/production-runs/${runId}/cancel`, {})).status).toBe(404);
+    expect((await post(viewer, `/production-runs/${runId}/cancel`, {})).status).toBe(403);
+    expect((await post(reviewer, `/production-runs/${runId}/cancel`, {})).status).toBe(403);
+    expect((await post(editor, `/production-runs/${runId}/cancel`, { status: 'SUCCEEDED' })).status).toBe(400);
+    const key = randomUUID();
+    const cancelled = await post(editor, `/production-runs/${runId}/cancel`, {}, key);
+    expect(cancelled.status).toBe(201);
+    expect(cancelled.body).toEqual({ runId, status: 'CANCELLED' });
+    expect((await post(editor, `/production-runs/${runId}/cancel`, {}, key)).body).toEqual(cancelled.body);
+    expect((await post(editor, `/production-runs/${runId}/cancel`, {})).body).toEqual(cancelled.body);
+    expect(await db.auditLog.count({ where: { workspaceId: workspaceA, resourceId: runId, action: 'PRODUCTION_CANCELLED' } })).toBe(1);
+    expect((await db.renderJob.findFirstOrThrow({ where: { workspaceId: workspaceA, productionRunId: runId } })).status).toBe('CANCELLED');
+    expect((await post(ownerA, `/production-runs/${runId}/retry`, {})).status).toBe(409);
+    const running = await db.productionRun.create({ data: { workspaceId: workspaceA, storyProjectId: base.storyProjectId, requestedById: base.requestedById, input: base.input!, idempotencyKey: randomUUID(), status: 'RUNNING', attempts: 1, workerLeaseUntil: new Date(Date.now() + 90_000) } });
+    await db.renderJob.create({ data: { workspaceId: workspaceA, productionRunId: running.id, status: 'RUNNING', attempts: 1 } });
+    await db.productionStage.create({ data: { workspaceId: workspaceA, productionRunId: running.id, name: 'VIDEO_RENDER', status: 'RUNNING', attempts: 1 } });
+    expect((await post(editor, `/production-runs/${running.id}/cancel`, {})).status).toBe(201);
+    const detail = await ownerA.get(`${prefix}/production-runs/${running.id}`);
+    expect(detail.body).toMatchObject({ status: 'CANCELLED', errorCode: 'USER_CANCELLED', sourcePostId: postId });
+    expect(detail.body.stages[0]).toMatchObject({ status: 'FAILED', errorCode: 'USER_CANCELLED' });
   });
 
   it('lets reviewers approve completed videos once, with rights checks and workspace isolation', async () => {

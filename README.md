@@ -4,6 +4,8 @@ A hybrid editorial MVP with workspace isolation from the first import. Phase 0â€
 
 ## Start locally
 
+For the minimal local export workflow, see [Vietnamese local export guide](docs/16-LOCAL-EXPORT.md). With the configured local PostgreSQL/Redis and eSpeak NG runtime, run `pnpm local:export` and open `http://127.0.0.1:3000/export`. Paste a Facebook/Threads reference link **and the authorized post/comment text**, review it, render with offline narration, and download the MP4. Automatic link retrieval and social posting are not enabled.
+
 Install Node.js 22.12 or later, pnpm 11.25.0 and Docker with Compose, then run from the repository root:
 
 ```sh
@@ -28,6 +30,7 @@ See [local development](docs/11-LOCAL-DEVELOPMENT.md) for worker commands and th
 - Dashboard, channels, source controls and sync history, all-post and candidate-library views, rights review and workspace/topic settings.
 - PostgreSQL migrations, Redis/BullMQ worker, immutable local object storage, typed adapter contracts and development mocks.
 - `/studio` selects approved candidates, creates source-grounded scripts, edits versions, queues production, shows durable stage progress, previews completed MP4s, and downloads authorized media. Runs and media are workspace-scoped and rights-checked again before access.
+- `/export` provides the local manual Facebook/Threads reference + supplied content workflow, workspace render history/resume, cancellation, render deadlines and reviewed MP4 download. PostgreSQL-backed recovery restores missing media/manual-import queue deliveries. See the [Phase 6 report](docs/17-PHASE-6-REPORT.md) for verification and remaining limits.
 - Remotion renders two deterministic vertical templates with stylized Reddit, Threads, Facebook and manual post/comment cards, approved static image backgrounds, narration audio, SRT/subtitle timelines and metadata checks. The committed smoke command renders a real sample MP4.
 - Script generation has deterministic and optional OpenAI adapters. TTS has deterministic tone, local speech (SAPI/eSpeak NG), and optional OpenAI adapters. Approximate subtitle word timings are marked as approximate.
 - `/autopilot` stores immutable rule versions and per-run snapshots, schedules work with timezone-aware rules, ranks eligible candidates, reserves estimated budget, supports dry run/cancel/retry/emergency stop, and routes output through the existing media worker and human QC approval.

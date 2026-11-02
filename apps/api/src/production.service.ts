@@ -6,7 +6,7 @@ import { LocalObjectStore, assertGroundedScript, listVoiceProfiles, prepareBackg
 import { AuthService, adminRoles, editRoles, reviewRoles, type AuthContext } from './auth/auth.service.js';
 import { ApiError, notFound } from './errors.js';
 import { mutationIdentity } from './idempotency.js';
-import { audioRequestSchema, backgroundUploadSchema, editStorySchema, productionCreateSchema, regenerateStorySchema, renderRequestSchema, videoReviewSchema } from './production.validation.js';
+import { audioRequestSchema, backgroundUploadSchema, cancelRunSchema, editStorySchema, productionCreateSchema, productionRunQuerySchema, regenerateStorySchema, renderRequestSchema, videoReviewSchema } from './production.validation.js';
 
 function objectStore() { return new LocalObjectStore(path.resolve(process.env.STORAGE_LOCAL_ROOT ?? '.data/objects')); }
 function safePlatform(platform: string): ScriptSource['platform'] {
@@ -189,11 +189,55 @@ export class ProductionService {
     const context = await this.auth.context(request);
     const run = await this.db.productionRun.findFirst({ where: { id: runId, workspaceId: context.workspaceId }, include: {
       stages: { orderBy: { id: 'asc' } }, renderJob: true,
-      videos: { orderBy: { createdAt: 'desc' }, take: 1, include: { mediaAsset: { select: { id: true, mimeType: true, checksum: true, metadata: true } } } },
-      story: { select: { id: true, versions: { orderBy: { version: 'desc' }, take: 1, select: { id: true, version: true } } } },
+      videos: { where: { status: { not: 'CANCELLED' } }, orderBy: { createdAt: 'desc' }, take: 1, include: { mediaAsset: { select: { id: true, mimeType: true, checksum: true, metadata: true } } } },
+      story: { select: { id: true, sourcePostId: true, channelId: true, post: { select: { id: true, title: true } }, versions: { orderBy: { version: 'desc' }, take: 1, select: { id: true, version: true } } } },
     } });
     if (!run) return notFound();
-    return run;
+    return { ...run, sourcePostId: run.story.sourcePostId, channelId: run.story.channelId, title: run.story.post.title };
+  }
+
+  async productionRuns(request: Request, rawQuery: unknown) {
+    const context = await this.auth.context(request);
+    const input = productionRunQuerySchema.parse(rawQuery);
+    if (input.cursor && !await this.db.productionRun.findFirst({ where: { id: input.cursor, workspaceId: context.workspaceId }, select: { id: true } })) return notFound();
+    const rows = await this.db.productionRun.findMany({
+      where: { workspaceId: context.workspaceId, ...(input.status ? { status: input.status } : {}) },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: input.limit + 1,
+      ...(input.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
+      select: {
+        id: true, storyProjectId: true, status: true, currentStage: true, attempts: true, errorCode: true,
+        createdAt: true, startedAt: true, completedAt: true,
+        renderJob: { select: { progress: true, status: true } },
+        story: { select: { sourcePostId: true, channelId: true, post: { select: { title: true } } } },
+        videos: { where: { status: { not: 'CANCELLED' } }, orderBy: { createdAt: 'desc' }, take: 1, select: { id: true, reviewStatus: true, mediaAsset: { select: { id: true, mimeType: true } } } },
+      },
+    });
+    return {
+      items: rows.slice(0, input.limit).map(({ story, ...run }) => ({ ...run, title: story.post.title, sourcePostId: story.sourcePostId, channelId: story.channelId })),
+      nextCursor: rows.length > input.limit ? rows[input.limit - 1]?.id ?? null : null,
+    };
+  }
+
+  async cancelRun(request: Request, runId: string, raw: unknown) {
+    const context = await this.auth.context(request, editRoles);
+    const input = cancelRunSchema.parse(raw);
+    return this.mutation(request, context, `/production-runs/${runId}/cancel`, input, async (tx) => {
+      const run = await tx.productionRun.findFirst({ where: { id: runId, workspaceId: context.workspaceId } });
+      if (!run) return notFound();
+      if (run.status === 'CANCELLED') return { runId, status: 'CANCELLED' };
+      if (!['QUEUED', 'RUNNING', 'FAILED_RETRYABLE'].includes(run.status)) throw new ApiError(409, 'RUN_NOT_CANCELLABLE', 'Only queued, running or retryable production work can be cancelled.');
+      const now = new Date();
+      const changed = await tx.productionRun.updateMany({
+        where: { id: runId, workspaceId: context.workspaceId, status: run.status, attempts: run.attempts },
+        data: { status: 'CANCELLED', errorCode: 'USER_CANCELLED', completedAt: now },
+      });
+      if (!changed.count) throw new ApiError(409, 'CONCURRENT_CHANGE', 'The run changed. Reload its current status.');
+      await tx.renderJob.updateMany({ where: { workspaceId: context.workspaceId, productionRunId: runId, status: { in: ['QUEUED', 'RUNNING', 'FAILED_RETRYABLE'] } }, data: { status: 'CANCELLED', errorCode: 'USER_CANCELLED', completedAt: now } });
+      await tx.productionStage.updateMany({ where: { workspaceId: context.workspaceId, productionRunId: runId, status: { in: ['PENDING', 'RUNNING'] } }, data: { status: 'FAILED', errorCode: 'USER_CANCELLED', completedAt: now } });
+      await tx.video.updateMany({ where: { workspaceId: context.workspaceId, productionRunId: runId, reviewStatus: 'PENDING' }, data: { status: 'CANCELLED' } });
+      await this.audit(tx, context, 'PRODUCTION_CANCELLED', 'ProductionRun', runId, { previousStatus: run.status, attempt: run.attempts });
+      return { runId, status: 'CANCELLED' };
+    });
   }
 
   async videos(request: Request) {
@@ -264,7 +308,7 @@ export class ProductionService {
         },
       });
       const accessible = videos.some((video) => {
-        if (!video.story || video.status === 'BLOCKED_RIGHTS' || video.reviewStatus === 'BLOCKED') return false;
+        if (!video.story || ['BLOCKED_RIGHTS', 'CANCELLED'].includes(video.status) || video.reviewStatus === 'BLOCKED') return false;
         try { assertRights(video.story.post.rights[0]); assertSafeText(video.story.post, video.story.post.comments); return true; } catch { return false; }
       });
       if (!accessible) return notFound();

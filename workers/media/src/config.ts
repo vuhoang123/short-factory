@@ -12,6 +12,8 @@ export const mediaWorkerConfigSchema = z.object({
   MEDIA_RETRY_DELAY_MS: z.coerce.number().int().min(100).max(300000).default(5000),
   MEDIA_RENDER_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(2),
   MEDIA_MAX_RENDER_SECONDS: z.coerce.number().int().min(10).max(3600).default(600),
+  MEDIA_RENDER_TIMEOUT_MS: z.coerce.number().int().min(1000).max(3600000).default(600000),
+  MEDIA_CANCEL_POLL_MS: z.coerce.number().int().min(100).max(10000).default(1000),
   STORAGE_LOCAL_ROOT: z.string().min(1).default('.data/objects'),
   TTS_PROVIDER: z.enum(['mock', 'local', 'openai']).default('mock'),
   SCRIPT_PROVIDER: z.enum(['mock', 'openai']).default('mock'),

@@ -6,16 +6,17 @@ export class ApiError extends Error {
   constructor(message: string, public readonly status: number, public readonly code?: string, public readonly requestId?: string) { super(message); }
 }
 
-export async function api<T extends z.ZodTypeAny>(path: string, schema: T, options: { method?: string; body?: unknown } = {}): Promise<z.infer<T>> {
+export async function api<T extends z.ZodTypeAny>(path: string, schema: T, options: { method?: string; body?: unknown; idempotencyKey?: string; signal?: AbortSignal } = {}): Promise<z.infer<T>> {
   const method = options.method ?? 'GET';
   const response = await fetch(`/api/v1${path}`, {
     method,
     credentials: 'same-origin',
     cache: 'no-store',
+    signal: options.signal,
     headers: {
       Accept: 'application/json',
       ...(options.body === undefined ? {} : { 'Content-Type': 'application/json' }),
-      ...(method === 'GET' ? {} : { 'Idempotency-Key': crypto.randomUUID() }),
+      ...(method === 'GET' ? {} : { 'Idempotency-Key': options.idempotencyKey ?? crypto.randomUUID() }),
     },
     ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
   });

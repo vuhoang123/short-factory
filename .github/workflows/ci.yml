@@ -31,7 +31,18 @@ jobs:
       - run: pnpm build
       - run: pnpm db:deploy
       - run: pnpm exec playwright install --with-deps chromium
+      - name: Configure the render browser
+        run: |
+          node --input-type=module <<'NODE'
+          import { chromium } from '@playwright/test';
+          import { appendFileSync } from 'node:fs';
+          appendFileSync(process.env.GITHUB_ENV, `REMOTION_BROWSER_EXECUTABLE=${chromium.executablePath()}\n`);
+          NODE
       - run: pnpm test:browser
+      - run: pnpm test:ui
+      - run: pnpm smoke:phase6
+        env:
+          TEST_DATABASE_URL: postgresql://shorts:ci-only-ephemeral-password@localhost:5432/shorts_factory_test?schema=public
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -39,3 +50,4 @@ jobs:
           path: |
             playwright-report/
             docs/screenshots/
+            test-results/

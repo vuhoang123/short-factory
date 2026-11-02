@@ -36,7 +36,9 @@ export function AutopilotDashboard() {
   const budget = usePhase5Resource('/budget-policy', budgetSchema);
   const [channelId, setChannelId] = useState('');
   const [runId, setRunId] = useState('');
+  const [runRevision, setRunRevision] = useState(0);
   const [run, setRun] = useState<z.infer<typeof runDetailSchema> | null>(null);
+  const [runError, setRunError] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
@@ -47,19 +49,30 @@ export function AutopilotDashboard() {
   useEffect(() => {
     if (!runId) return;
     let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const controller = new AbortController();
+    setRun((current) => current?.id === runId ? current : null); setRunError('');
     const load = async () => {
-      try { const next = await api(`/automation/runs/${runId}`, runDetailSchema); if (active) setRun(next); }
-      catch (failure) { if (active) setError(errorMessage(failure)); }
+      let keepPolling = true;
+      try {
+        const next = await api(`/automation/runs/${runId}`, runDetailSchema, { signal: controller.signal });
+        if (!active) return;
+        setRun(next); setRunError('');
+        keepPolling = !['SUCCEEDED', 'FAILED_PERMANENT', 'CANCELLED', 'BLOCKED'].includes(next.status);
+      }
+      catch (failure) { if (active) setRunError(errorMessage(failure)); }
+      finally { if (active && keepPolling) timer = setTimeout(() => { void load(); }, 6000); }
     };
-    void load(); const timer = window.setInterval(() => void load(), 6000);
-    return () => { active = false; window.clearInterval(timer); };
-  }, [runId]);
+    void load();
+    return () => { active = false; controller.abort(); if (timer) clearTimeout(timer); };
+  }, [runId, runRevision]);
 
   async function mutate(path: string, body: unknown, message: string, method = 'POST') {
     setBusy(true); setError(''); setNotice('');
     try {
       const result = await api(path, unknownResponseSchema, { method, body });
       setNotice(message); automation.reload(); approvals.reload(); usage.reload(); budget.reload();
+      if (runId && path.startsWith(`/automation/runs/${runId}/`)) setRunRevision((value) => value + 1);
       return result;
     } catch (failure) { setError(errorMessage(failure)); return null; }
     finally { setBusy(false); }
@@ -86,13 +99,13 @@ export function AutopilotDashboard() {
 
   return <>
     <div className="page-heading"><div><span className="eyebrow">AUTOMATION · PHASE 5</span><h1>Content autopilot</h1><p>Configure a channel, follow its work, and review each output.</p></div><Link className="button secondary" href="/analytics">Performance analytics →</Link></div>
-    {error && <ErrorNotice message={error} />}{notice && <div className="notice success" role="status">{notice}</div>}
+    {error && <ErrorNotice message={error} />}{runError && <ErrorNotice message={runError} />}{notice && <div className="notice success" role="status">{notice}</div>}
     {automation.error && <ErrorNotice message={automation.error} retry={automation.reload} />}
     {automation.loading && !automation.data ? <p role="status" className="loading-state">Loading automation activity…</p> : automation.data && <div className="metrics-grid"><Stat title="Enabled channels" value={automation.data.summary.activeRules} /><Stat title="Running / queued" value={`${automation.data.summary.running} / ${automation.data.summary.queued}`} /><Stat title="Awaiting approval" value={automation.data.summary.pendingApproval} /><Stat title="Scheduled / failed" value={`${automation.data.summary.scheduled} / ${automation.data.summary.failed}`} /><Stat title="Estimated spending" value={formatUsd(automation.data.summary.estimatedSpendUsd)} note={`Billed: ${formatUsd(automation.data.summary.billedSpendUsd)}`} /></div>}
     <div className="phase5-two-columns">
       <section className="panel form-panel"><h2>Channel rules</h2><p className="muted">Each run uses a frozen copy of the saved rule version.</p>
         {channels.error && <ErrorNotice message={channels.error} retry={channels.reload} />}
-        {channels.loading ? <p role="status">Loading channels…</p> : !channels.data?.items.length ? <EmptyState title="Create a channel first">Add a content channel before configuring automation.</EmptyState> : <>
+        {channels.loading && !channels.data ? <p role="status">Loading channels…</p> : !channels.data?.items.length ? <EmptyState title="Create a channel first">Add a content channel before configuring automation.</EmptyState> : <>
           <label>Content channel<select value={channelId} onChange={(event) => setChannelId(event.target.value)}>{channels.data.items.map((channel) => <option key={channel.id} value={channel.id}>{channel.name}</option>)}</select></label>
           <div className="phase5-rule-status"><StatusBadge value={rule?.status ?? 'NOT_CONFIGURED'} /><span className="field-help">{rule ? `Version ${rule.version}` : 'No rule saved yet'}</span></div>
           {mayAdmin(role) && rule && <div className="phase5-actions">{(['ENABLE', 'DISABLE', 'PAUSE', 'RESUME'] as const).map((action) => <button className="button secondary small" key={action} disabled={busy} onClick={() => void mutate(`/channels/${channelId}/automation/control`, { action }, `${action.toLowerCase()} recorded.`)}>{action.charAt(0) + action.slice(1).toLowerCase()}</button>)}<button className="button danger small" disabled={busy} onClick={() => void mutate(`/channels/${channelId}/automation/control`, { action: 'EMERGENCY_STOP' }, 'Emergency stop recorded. New work is blocked for this channel.')}>Emergency stop</button></div>}

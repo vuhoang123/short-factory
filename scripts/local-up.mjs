@@ -17,7 +17,7 @@ if (!existsSync('.env')) {
     REDIS_URL: `redis://:${redisPassword}@localhost:6379`,
     APP_URL: 'http://localhost:3000', API_URL: 'http://localhost:3001', PORT: '3001',
     STORAGE_PROVIDER: 'local', STORAGE_LOCAL_ROOT: '.data/objects',
-    AI_PROVIDER: 'mock', TTS_PROVIDER: 'mock', PUBLISHER_PROVIDER: 'mock',
+    AI_PROVIDER: 'mock', SCRIPT_PROVIDER: 'mock', TTS_PROVIDER: 'local', PUBLISHER_PROVIDER: 'mock',
     ALLOW_REGISTRATION: 'true'
   };
   writeFileSync('.env', Object.entries(values).map(([key, value]) => `${key}=${value}`).join('\n') + '\n', { flag: 'wx', mode: 0o600 });

@@ -12,7 +12,11 @@ export const storySegmentSchema = z.object({
   estimatedDurationMs: z.number().int().positive().optional(),
   voiceProfileId: z.string().max(100).optional(),
   displayStyle: z.string().max(100).optional(),
-}).strict();
+}).strict().superRefine((segment, ctx) => {
+  if (segment.type === 'COMMENT' && segment.narrationType !== 'VERBATIM') {
+    ctx.addIssue({ code: 'custom', path: ['narrationType'], message: 'Quoted comments must use VERBATIM narration. Use COMMENTARY for original commentary.' });
+  }
+});
 
 export const storyScriptSchema = z.object({
   version: z.number().int().positive(),

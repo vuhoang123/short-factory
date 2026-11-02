@@ -1,6 +1,7 @@
 import { Queue } from 'bullmq';
 import type { PrismaClient } from '@shorts-factory/database';
 import { jobEnvelopeSchema } from '@shorts-factory/shared';
+import { z } from 'zod';
 import type { MediaWorkerConfig } from './config.js';
 
 export interface MediaEnvelope {
@@ -8,7 +9,9 @@ export interface MediaEnvelope {
   idempotencyKey: string; traceId: string; attempt: number; scheduledAt: string;
 }
 
-/** Enqueue first by durable outbox ID, then mark delivered so worker restarts cannot lose runs. */
+const deliverySchema = z.object({ version: z.number().int().positive().default(1), recoveryAttempts: z.number().int().nonnegative().default(0) }).passthrough();
+
+/** Enqueue by durable event ID before delivery acknowledgement; DB recovery handles later Redis loss. */
 export async function relayMediaOutbox(db: PrismaClient, queue: Queue<MediaEnvelope>, config: MediaWorkerConfig): Promise<number> {
   const events = await db.outboxEvent.findMany({
     where: { publishedAt: null, eventType: { in: ['PRODUCTION_RUN_REQUESTED', 'MEDIA_ASSET_DELETE_REQUESTED'] } },
@@ -16,9 +19,10 @@ export async function relayMediaOutbox(db: PrismaClient, queue: Queue<MediaEnvel
   });
   let relayed = 0;
   for (const event of events) {
+    const delivery = deliverySchema.parse(event.payload);
     const envelope = jobEnvelopeSchema.parse({
       jobId: event.id, workspaceId: event.workspaceId, entityId: event.aggregateId, step: event.eventType,
-      version: 1, idempotencyKey: event.id, traceId: event.id, attempt: 0, scheduledAt: event.createdAt.toISOString(),
+      version: delivery.version, idempotencyKey: event.id, traceId: event.id, attempt: delivery.recoveryAttempts, scheduledAt: event.createdAt.toISOString(),
     });
     await queue.add(event.eventType, envelope, {
       jobId: event.id, attempts: config.MEDIA_RETRY_ATTEMPTS,

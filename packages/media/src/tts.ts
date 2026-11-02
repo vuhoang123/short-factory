@@ -55,36 +55,43 @@ export class MockTtsProvider implements TtsProvider {
   }
 }
 
-function runProcess(command: string, args: string[], input: string, env: NodeJS.ProcessEnv): Promise<void> {
+function runProcess(command: string, args: string[], input: string, env: NodeJS.ProcessEnv, errorPrefix = 'TTS_LOCAL'): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { env, windowsHide: true, stdio: ['pipe', 'ignore', 'ignore'] });
     const timeout = setTimeout(() => child.kill(), 90_000);
-    child.once('error', () => { clearTimeout(timeout); reject(new Error('TTS_LOCAL_PROVIDER_UNAVAILABLE')); });
-    child.once('close', (code) => { clearTimeout(timeout); if (code === 0) resolve(); else reject(new Error('TTS_LOCAL_PROVIDER_FAILED')); });
+    child.once('error', () => { clearTimeout(timeout); reject(new Error(`${errorPrefix}_PROVIDER_UNAVAILABLE`)); });
+    child.once('close', (code) => { clearTimeout(timeout); if (code === 0) resolve(); else reject(new Error(`${errorPrefix}_PROVIDER_FAILED`)); });
     child.stdin.end(input, 'utf8');
   });
 }
 
 export class LocalTtsProvider implements TtsProvider {
-  readonly id = 'local-system-v1';
+  get id(): string { return process.platform === 'win32' && this.env.TTS_WSL_DISTRO ? `local-espeak-wsl-v1:${this.env.TTS_WSL_DISTRO}` : 'local-system-v1'; }
+  constructor(private readonly env: NodeJS.ProcessEnv = process.env) {}
 
   async synthesize(input: TtsInput): Promise<TtsResult> {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'sf-tts-'));
     const outputPath = path.join(directory, 'speech.wav');
     try {
-      if (process.platform === 'win32') {
+      if (process.platform === 'win32' && this.env.TTS_WSL_DISTRO) {
+        const distro = this.env.TTS_WSL_DISTRO;
+        if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/.test(distro)) throw new Error('TTS_LOCAL_WSL_DISTRO_INVALID');
+        if (!/^[a-zA-Z]:[\\/]/.test(outputPath)) throw new Error('TTS_LOCAL_WSL_PATH_UNSUPPORTED');
+        const linuxPath = `/mnt/${outputPath[0]!.toLowerCase()}${outputPath.slice(2).replaceAll('\\', '/')}`;
+        await runProcess('wsl.exe', ['--distribution', distro, '--exec', 'espeak-ng', '-v', input.voiceId, '-s', String(Math.round(165 * input.speakingRate)), '-w', linuxPath, '--stdin'], input.text, this.env, 'TTS_LOCAL_WSL');
+      } else if (process.platform === 'win32') {
         const rate = Math.max(-10, Math.min(10, Math.round((input.speakingRate - 1) * 10)));
         const command = "$ErrorActionPreference='Stop'; [Console]::InputEncoding = New-Object System.Text.UTF8Encoding; Add-Type -AssemblyName System.Speech; $text=[Console]::In.ReadToEnd(); $synth=New-Object System.Speech.Synthesis.SpeechSynthesizer; $synth.SelectVoice($env:SF_TTS_VOICE); $synth.Rate=[int]$env:SF_TTS_RATE; $synth.SetOutputToWaveFile($env:SF_TTS_OUTPUT); $synth.Speak($text); $synth.Dispose()";
-        await runProcess('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', command], input.text, { ...process.env, SF_TTS_OUTPUT: outputPath, SF_TTS_VOICE: input.voiceId, SF_TTS_RATE: String(rate) });
+        await runProcess('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', command], input.text, { ...this.env, SF_TTS_OUTPUT: outputPath, SF_TTS_VOICE: input.voiceId, SF_TTS_RATE: String(rate) });
       } else if (process.platform === 'linux') {
         const rate = Math.round(165 * input.speakingRate);
-        await runProcess('espeak-ng', ['-v', input.voiceId, '-s', String(rate), '-w', outputPath, '--stdin'], input.text, process.env);
+        await runProcess('espeak-ng', ['-v', input.voiceId, '-s', String(rate), '-w', outputPath, '--stdin'], input.text, this.env);
       } else {
         throw new Error('TTS_LOCAL_PROVIDER_UNAVAILABLE');
       }
       const audio = await readFile(outputPath);
       const durationMs = waveDurationMs(audio);
-      const costRate = Number(process.env.TTS_COST_PER_1K_CHARS);
+      const costRate = Number(this.env.TTS_COST_PER_1K_CHARS);
       const estimatedCostUsd = Number.isFinite(costRate) && costRate >= 0 ? (input.text.length / 1000) * costRate : null;
       return { audio, mimeType: 'audio/wav', durationMs, provider: this.id, voiceId: input.voiceId, usageUnits: input.text.length, estimatedCostUsd, timingPrecision: 'APPROXIMATE' };
     } finally {
@@ -94,7 +101,7 @@ export class LocalTtsProvider implements TtsProvider {
 }
 
 export class OpenAiTtsProvider implements TtsProvider {
-  readonly id = 'openai-audio-speech';
+  get id(): string { return `openai-audio-speech:${this.model}`; }
   constructor(private readonly apiKey: string, private readonly model: string, private readonly costPer1kChars: number | null) {}
 
   async synthesize(input: TtsInput): Promise<TtsResult> {
@@ -107,14 +114,14 @@ export class OpenAiTtsProvider implements TtsProvider {
     if (!response.ok) throw new Error(response.status === 429 ? 'TTS_PROVIDER_RATE_LIMITED' : 'TTS_PROVIDER_REQUEST_FAILED');
     const audio = Buffer.from(await response.arrayBuffer());
     const cost = this.costPer1kChars === null ? null : (input.text.length / 1000) * this.costPer1kChars;
-    return { audio, mimeType: 'audio/wav', durationMs: waveDurationMs(audio), provider: `${this.id}:${this.model}`, voiceId: input.voiceId, usageUnits: input.text.length, estimatedCostUsd: cost, timingPrecision: 'APPROXIMATE' };
+    return { audio, mimeType: 'audio/wav', durationMs: waveDurationMs(audio), provider: this.id, voiceId: input.voiceId, usageUnits: input.text.length, estimatedCostUsd: cost, timingPrecision: 'APPROXIMATE' };
   }
 }
 
 export function createTtsProvider(env: NodeJS.ProcessEnv = process.env): TtsProvider {
   const provider = env.TTS_PROVIDER ?? 'local';
   if (provider === 'mock') return new MockTtsProvider();
-  if (provider === 'local') return new LocalTtsProvider();
+  if (provider === 'local') return new LocalTtsProvider(env);
   if (provider === 'openai') {
     const apiKey = env.OPENAI_API_KEY;
     const model = env.TTS_MODEL ?? 'gpt-4o-mini-tts';
@@ -130,6 +137,10 @@ export function createTtsProvider(env: NodeJS.ProcessEnv = process.env): TtsProv
 export function listVoiceProfiles(env: NodeJS.ProcessEnv = process.env): VoiceProfile[] {
   if (env.TTS_PROVIDER === 'openai') return ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'marin', 'onyx', 'nova', 'sage', 'shimmer'].map((voiceId) => ({ id: `openai:${voiceId}`, name: `OpenAI ${voiceId}`, provider: 'openai', language: 'multilingual', voiceId, requiresCredentials: true }));
   if (env.TTS_PROVIDER === 'mock') return [{ id: 'mock:default', name: 'Deterministic demo tone', provider: 'mock', language: 'multilingual', voiceId: 'demo-tone', requiresCredentials: false }];
+  if (process.platform === 'win32' && env.TTS_WSL_DISTRO) return [
+    { id: 'local:vietnamese', name: `eSpeak NG Vietnamese (WSL ${env.TTS_WSL_DISTRO})`, provider: 'local', language: 'vi', voiceId: 'vi', requiresCredentials: false },
+    { id: 'local:english', name: `eSpeak NG English (WSL ${env.TTS_WSL_DISTRO})`, provider: 'local', language: 'en', voiceId: 'en-us', requiresCredentials: false },
+  ];
   if (process.platform === 'win32') return [
     { id: 'local:david', name: 'Microsoft David Desktop', provider: 'local', language: 'en', voiceId: 'Microsoft David Desktop', requiresCredentials: false },
     { id: 'local:zira', name: 'Microsoft Zira Desktop', provider: 'local', language: 'en', voiceId: 'Microsoft Zira Desktop', requiresCredentials: false },
