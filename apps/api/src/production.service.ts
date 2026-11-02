@@ -6,7 +6,12 @@ import { LocalObjectStore, assertGroundedScript, listVoiceProfiles, prepareBackg
 import { AuthService, adminRoles, editRoles, reviewRoles, type AuthContext } from './auth/auth.service.js';
 import { ApiError, notFound } from './errors.js';
 import { mutationIdentity } from './idempotency.js';
-import { audioRequestSchema, backgroundUploadSchema, cancelRunSchema, editStorySchema, productionCreateSchema, productionRunQuerySchema, regenerateStorySchema, renderRequestSchema, videoReviewSchema } from './production.validation.js';
+import { selectTopComments } from '@shorts-factory/media';
+import { customVoiceProfile, validateVoiceReference, type VoiceProfile } from '@shorts-factory/media';
+import { z } from 'zod';
+import { sourceImageMetadataSchema, assertSourceImageBindings } from '@shorts-factory/media';
+import { createHash } from 'node:crypto';
+import { audioRequestSchema, backgroundUploadSchema, cancelRunSchema, editStorySchema, productionCreateSchema, productionRunQuerySchema, regenerateStorySchema, renderRequestSchema, storyRenderRequestSchema, videoReviewSchema } from './production.validation.js';
 
 function objectStore() { return new LocalObjectStore(path.resolve(process.env.STORAGE_LOCAL_ROOT ?? '.data/objects')); }
 function safePlatform(platform: string): ScriptSource['platform'] {
@@ -33,8 +38,38 @@ export class ProductionService {
   constructor(readonly db: PrismaClient, readonly auth: AuthService) {}
 
   async voiceProfiles(request: Request) {
-    await this.auth.context(request);
-    return { items: listVoiceProfiles().filter((profile) => !profile.requiresCredentials || Boolean(process.env.OPENAI_API_KEY)) };
+    const { workspaceId } = await this.auth.context(request);
+    const assets = process.env.TTS_PROVIDER === 'vieneu' ? await this.db.mediaAsset.findMany({ where: { workspaceId, kind: 'VOICE_REFERENCE' }, orderBy: { createdAt: 'desc' }, take: 100, select: { id: true, kind: true, metadata: true, rightsMetadata: true } }) : [];
+    return { items: [...listVoiceProfiles().filter((profile) => !profile.requiresCredentials || Boolean(process.env.OPENAI_API_KEY)), ...assets.flatMap((asset) => { const profile = customVoiceProfile(asset); return profile ? [profile] : []; })] };
+  }
+
+  private async voiceProfile(workspaceId: string, id: string): Promise<VoiceProfile | undefined> {
+    if (!id.startsWith('vieneu:custom:')) return listVoiceProfiles().find((profile) => profile.id === id);
+    if (process.env.TTS_PROVIDER !== 'vieneu') return undefined;
+    const assetId = z.string().uuid().safeParse(id.slice('vieneu:custom:'.length));
+    if (!assetId.success) return undefined;
+    const asset = await this.db.mediaAsset.findFirst({ where: { id: assetId.data, workspaceId, kind: 'VOICE_REFERENCE' }, select: { id: true, kind: true, metadata: true, rightsMetadata: true } });
+    return asset ? customVoiceProfile(asset) : undefined;
+  }
+
+  async uploadVoice(request: Request, rawBytes: unknown) {
+    const context = await this.auth.context(request, editRoles);
+    if (process.env.TTS_PROVIDER !== 'vieneu') throw new ApiError(409, 'TTS_VIENEU_NOT_READY', 'Start the local VieNeu speech service before adding a voice.');
+    if (!['audio/wav', 'audio/x-wav'].includes(request.header('content-type')?.split(';')[0]?.trim() ?? '') || !Buffer.isBuffer(rawBytes)) throw new ApiError(400, 'VOICE_REFERENCE_INVALID', 'Use a 3–15 second PCM16 WAV reference.');
+    if (request.header('x-voice-consent') !== 'true') throw new ApiError(400, 'VOICE_CONSENT_REQUIRED', 'Confirm that this is your voice or that the speaker authorized this use.');
+    let decodedName: string;
+    try { decodedName = decodeURIComponent(request.header('x-voice-name') ?? ''); } catch { throw new ApiError(400, 'VOICE_NAME_INVALID', 'Choose a valid voice name.'); }
+    const name = z.string().trim().min(1).max(80).parse(decodedName);
+    let durationMs: number;
+    try { durationMs = validateVoiceReference(rawBytes); } catch { throw new ApiError(400, 'VOICE_REFERENCE_INVALID', 'Use a 3–15 second PCM16 WAV reference under 3 MB.'); }
+    const object = await objectStore().put(context.workspaceId, rawBytes);
+    return this.mutation(request, context, '/voice-profiles', { checksum: object.checksum, name, attested: true }, async (tx) => {
+      const existing = await tx.mediaAsset.findUnique({ where: { workspaceId_storageKey: { workspaceId: context.workspaceId, storageKey: object.storageKey } } });
+      if (existing && existing.kind !== 'VOICE_REFERENCE') throw new ApiError(409, 'VOICE_ASSET_CONFLICT', 'This reference is already stored as another media type. Use a separate recording.');
+      const asset = existing ?? await tx.mediaAsset.create({ data: { workspaceId: context.workspaceId, kind: 'VOICE_REFERENCE', storageKey: object.storageKey, checksum: object.checksum, mimeType: 'audio/wav', metadata: { name, provider: 'vieneu', durationMs }, rightsMetadata: { attested: true, approved: true, uploadedById: context.userId } } });
+      await this.audit(tx, context, 'VOICE_REFERENCE_UPLOADED', 'MediaAsset', asset.id, { durationMs });
+      return { id: `vieneu:custom:${asset.id}`, name, provider: 'vieneu' };
+    });
   }
 
   async templates(request: Request) {
@@ -74,7 +109,7 @@ export class ProductionService {
   async createFromCandidate(request: Request, candidateId: string, raw: unknown) {
     const context = await this.auth.context(request, editRoles);
     const input = productionCreateSchema.parse(raw);
-    const profile = listVoiceProfiles().find((item) => item.id === input.voiceProfileId);
+    const profile = await this.voiceProfile(context.workspaceId, input.voiceProfileId);
     if (!profile) throw new ApiError(400, 'VOICE_PROFILE_INVALID', 'Choose an available voice profile.');
     if (profile.language !== 'multilingual' && profile.language.toLowerCase() !== input.language.slice(0, 2).toLowerCase()) throw new ApiError(400, 'VOICE_LANGUAGE_MISMATCH', 'Choose a voice profile that supports the selected language.');
     const candidate = await this.db.contentCandidate.findFirst({ where: { id: candidateId, workspaceId: context.workspaceId }, include: { post: { include: { comments: true, rights: { orderBy: { createdAt: 'desc' }, take: 1 } } } } });
@@ -83,7 +118,8 @@ export class ProductionService {
     assertRights(candidate.post.rights[0]);
     assertSafeText(candidate.post, candidate.post.comments);
     const commentsById = new Map(candidate.post.comments.map((comment) => [comment.id, comment]));
-    const selected = input.commentIds.map((id) => {
+    const selectedIds = input.commentSelection === 'TOP_REACTIONS' ? selectTopComments([...candidate.post.comments].sort((a, b) => a.id.localeCompare(b.id)), input.targetDurationSec).items.map((comment) => comment.id) : input.commentIds;
+    const selected = selectedIds.map((id) => {
       const comment = commentsById.get(id);
       if (!comment) throw new ApiError(400, 'COMMENT_NOT_IN_SOURCE', 'Select comments that belong to this source post.');
       return comment;
@@ -92,11 +128,11 @@ export class ProductionService {
     const channel = await this.db.contentChannel.findFirst({ where: { id: input.channelId, workspaceId: context.workspaceId }, select: { id: true } });
     if (!channel) return notFound();
     const normalized = await this.buildInput(context.workspaceId, {
-      mode: 'CREATE', candidateId, channelId: input.channelId, commentIds: input.commentIds,
+      mode: input.draftOnly ? 'SCRIPT_ONLY' : 'CREATE', candidateId, channelId: input.channelId, commentIds: selectedIds,
       language: input.language, targetDurationSec: input.targetDurationSec, style: input.style, voiceProfileId: profile.id, voiceId: profile.voiceId,
       speakingRate: input.speakingRate, templateId: input.templateId, backgroundAssetId: input.backgroundAssetId ?? null,
       subtitlePreset: input.subtitlePreset, theme: input.theme, anonymizeAuthors: input.anonymizeAuthors, showEngagement: input.showEngagement,
-      selectedSegmentIds: [], storyVersionId: null,
+      selectedSegmentIds: [], storyVersionId: null, ...(profile.provider === 'vieneu' ? { audioTimed: true } : {}),
     });
     return this.mutation(request, context, `/candidates/${candidateId}/produce`, input, async (tx) => {
       const current = await tx.contentCandidate.findFirst({ where: { id: candidateId, workspaceId: context.workspaceId }, include: { post: { include: { rights: { orderBy: { createdAt: 'desc' }, take: 1 }, comments: true } } } });
@@ -149,8 +185,12 @@ export class ProductionService {
     assertSafeText(story.post, story.post.comments);
     const lastInput = story.productionRuns[0] ? productionInputSchema.safeParse(story.productionRuns[0].input) : null;
     if (!lastInput?.success) throw new ApiError(409, 'PRODUCTION_SETTINGS_MISSING', 'Create the first production before regenerating this story.');
-    const base = lastInput.data;
-    const input = productionInputSchema.parse({ ...base, mode: 'REGENERATE', storyVersionId: null, selectedSegmentIds: [], commentIds: changes.commentIds ?? base.commentIds, targetDurationSec: changes.targetDurationSec ?? base.targetDurationSec, style: changes.style ?? base.style });
+    const base = { ...lastInput.data }; delete base.preview; delete base.audioTimed;
+    const profile = await this.voiceProfile(context.workspaceId, changes.voiceProfileId ?? base.voiceProfileId);
+    if (!profile) throw new ApiError(400, 'VOICE_PROFILE_INVALID', 'Choose an available voice profile.');
+    if (profile.language !== 'multilingual' && profile.language.toLowerCase() !== base.language.slice(0, 2).toLowerCase()) throw new ApiError(400, 'VOICE_LANGUAGE_MISMATCH', 'Choose a voice profile that supports the script language.');
+    const selectedCommentIds = changes.commentSelection === 'TOP_REACTIONS' ? selectTopComments([...story.post.comments].sort((a, b) => a.id.localeCompare(b.id)), changes.targetDurationSec ?? base.targetDurationSec).items.map((comment) => comment.id) : changes.commentIds ?? base.commentIds;
+    const input = productionInputSchema.parse({ ...base, mode: changes.draftOnly ? 'SCRIPT_ONLY' : 'REGENERATE', storyVersionId: null, selectedSegmentIds: [], commentIds: selectedCommentIds, targetDurationSec: changes.targetDurationSec ?? base.targetDurationSec, style: changes.style ?? base.style, voiceProfileId: profile.id, voiceId: profile.voiceId, speakingRate: changes.speakingRate ?? base.speakingRate, ...(profile.provider === 'vieneu' ? { audioTimed: true } : {}) });
     if (input.commentIds.some((id) => !story.post.comments.some((comment) => comment.id === id))) throw new ApiError(400, 'COMMENT_NOT_IN_SOURCE', 'Select comments that belong to this source post.');
     return this.mutation(request, context, `/stories/${storyId}/regenerate`, changes, async (tx) => this.enqueue(tx, context, story.id, input, `/stories/${storyId}/regenerate`));
   }
@@ -163,10 +203,37 @@ export class ProductionService {
     const version = story.versions[0];
     const last = story.productionRuns[0] ? productionInputSchema.safeParse(story.productionRuns[0].input) : null;
     if (!version || !last?.success) throw new ApiError(409, 'SCRIPT_REQUIRED', 'Generate or save a script before generating audio.');
-    const profile = listVoiceProfiles().find((item) => item.id === (changes.voiceProfileId ?? last.data.voiceProfileId));
+    const profile = await this.voiceProfile(context.workspaceId, changes.voiceProfileId ?? last.data.voiceProfileId);
     if (!profile) throw new ApiError(400, 'VOICE_PROFILE_INVALID', 'Choose an available voice profile.');
-    const input = productionInputSchema.parse({ ...last.data, mode: 'AUDIO_ONLY', storyVersionId: version.id, voiceProfileId: profile.id, voiceId: profile.voiceId, speakingRate: changes.speakingRate ?? last.data.speakingRate, selectedSegmentIds: changes.segmentIds ?? [] });
+    const prior = { ...last.data }; delete prior.preview;
+    const input = productionInputSchema.parse({ ...prior, mode: 'AUDIO_ONLY', storyVersionId: version.id, voiceProfileId: profile.id, voiceId: profile.voiceId, speakingRate: changes.speakingRate ?? last.data.speakingRate, selectedSegmentIds: changes.segmentIds ?? [], ...(changes.preview ? { preview: true } : {}) });
     return this.mutation(request, context, `/stories/${storyId}/audio`, changes, async (tx) => this.enqueue(tx, context, story.id, input, `/stories/${storyId}/audio`));
+  }
+
+  async renderStory(request: Request, storyId: string, raw: unknown) {
+    const context = await this.auth.context(request, editRoles);
+    const changes = storyRenderRequestSchema.parse(raw);
+    const story = await this.db.storyProject.findFirst({ where: { id: storyId, workspaceId: context.workspaceId }, include: { post: { include: { rights: { orderBy: { createdAt: 'desc' }, take: 1 }, comments: true } }, versions: { orderBy: { version: 'desc' }, take: 1 }, productionRuns: { orderBy: { createdAt: 'desc' }, take: 1 } } });
+    if (!story) return notFound();
+    assertRights(story.post.rights[0]);
+    assertSafeText(story.post, story.post.comments);
+    const latest = story.versions[0];
+    const prior = story.productionRuns[0] ? productionInputSchema.safeParse(story.productionRuns[0].input) : null;
+    if (!latest || !prior?.success) throw new ApiError(409, 'SCRIPT_REQUIRED', 'Save a script before rendering a video.');
+    const profile = await this.voiceProfile(context.workspaceId, changes.voiceProfileId ?? prior.data.voiceProfileId);
+    if (!profile) throw new ApiError(400, 'VOICE_PROFILE_INVALID', 'Choose an available voice profile.');
+    if (profile.language !== 'multilingual' && profile.language.toLowerCase() !== prior.data.language.slice(0, 2).toLowerCase()) throw new ApiError(400, 'VOICE_LANGUAGE_MISMATCH', 'Choose a voice profile that supports the script language.');
+    const base = { ...prior.data }; delete base.preview; delete base.audioTimed;
+    const input = productionInputSchema.parse({ ...base, ...changes, voiceProfileId: profile.id, voiceId: profile.voiceId, mode: 'RENDER', storyVersionId: latest.id, selectedSegmentIds: [], ...(profile.provider === 'vieneu' ? { audioTimed: true } : {}) });
+    await this.assertBackground(context.workspaceId, input.backgroundAssetId);
+    return this.mutation(request, context, `/stories/${storyId}/render`, changes, async (tx) => {
+      const current = await tx.storyProject.findFirst({ where: { id: storyId, workspaceId: context.workspaceId }, include: { post: { include: { rights: { orderBy: { createdAt: 'desc' }, take: 1 }, comments: true } }, versions: { orderBy: { version: 'desc' }, take: 1 } } });
+      if (!current) return notFound();
+      assertRights(current.post.rights[0]);
+      assertSafeText(current.post, current.post.comments);
+      if (current.versions[0]?.id !== latest.id) throw new ApiError(409, 'CONCURRENT_CHANGE', 'The script changed. Reload the saved version before rendering.');
+      return this.enqueue(tx, context, story.id, input, `/stories/${storyId}/render`);
+    });
   }
 
   async renderVideo(request: Request, videoId: string, raw: unknown) {
@@ -331,9 +398,12 @@ export class ProductionService {
         try { assertRights(audio.storyVersion.story.post.rights[0]); assertSafeText(audio.storyVersion.story.post, audio.storyVersion.story.post.comments); return true; } catch { return false; }
       });
       if (!accessible) return notFound();
+    } else if (asset.kind === 'SOURCE_CAPTURE') {
+      const metadata = sourceImageMetadataSchema.safeParse(asset.metadata);
+      if (!metadata.success || !await this.db.sourcePost.findFirst({ where: { id: metadata.data.postId, workspaceId: context.workspaceId, deletedAt: null } })) return notFound();
     } else if (asset.kind !== 'BACKGROUND') return notFound();
     const bytes = await objectStore().get(context.workspaceId, asset.checksum);
-    const safeName = asset.kind === 'VIDEO' ? 'short-video.mp4' : asset.kind === 'BACKGROUND' ? 'background.webp' : asset.kind === 'AUDIO' ? 'narration.wav' : 'media.bin';
+    const safeName = asset.kind === 'VIDEO' ? 'short-video.mp4' : asset.kind === 'BACKGROUND' ? 'background.webp' : asset.kind === 'AUDIO' ? 'narration.wav' : 'source.png';
     response.status(200);
     response.setHeader('Content-Type', asset.mimeType);
     response.setHeader('Content-Length', bytes.byteLength);
@@ -380,9 +450,28 @@ export class ProductionService {
   }
 
   private async enqueue(tx: Prisma.TransactionClient, context: AuthContext, storyProjectId: string, input: ProductionInput, route: string) {
+    const story = await tx.storyProject.findFirst({ where: { id: storyProjectId, workspaceId: context.workspaceId }, include: { post: { include: { comments: true } } } });
+    if (!story || story.post.deletedAt) return notFound();
+    const provenance = story.post.rawPayload;
+    if (provenance && typeof provenance === 'object' && !Array.isArray(provenance) && typeof provenance.captureRunId === 'string') {
+      const assets = await tx.mediaAsset.findMany({ where: { workspaceId: context.workspaceId, kind: 'SOURCE_CAPTURE', metadata: { path: ['postId'], equals: story.post.id } } });
+      const sources = new Map<string, string>([[`post:${story.post.id}`, story.post.body], ...story.post.comments.filter(comment => input.commentIds.includes(comment.id)).map<[string, string]>(comment => [`comment:${comment.id}`, comment.body])]);
+      const sourceImages: NonNullable<ProductionInput['sourceImages']> = [];
+      for (const [ref, text] of sources) {
+        const matches = assets.flatMap(asset => {
+          const parsed = sourceImageMetadataSchema.safeParse(asset.metadata);
+          return parsed.success && parsed.data.captureRunId === provenance.captureRunId && parsed.data.sourceRef === ref && parsed.data.variant === (input.anonymizeAuthors ? 'ANONYMIZED' : 'ORIGINAL') && parsed.data.textHash === createHash('sha256').update(text!).digest('hex') ? [{ asset, metadata: parsed.data }] : [];
+        });
+        if (matches.length !== 1) throw new ApiError(409, input.anonymizeAuthors ? 'SOURCE_IMAGE_ANONYMIZATION_REQUIRED' : 'SOURCE_IMAGE_MISSING', 'Thiếu ảnh nguồn khớp nội dung hoặc ảnh đã che tên/avatar. Kiểm tra ảnh chụp; có thể tắt che tác giả sau khi tự kiểm tra quyền và dữ liệu riêng tư.');
+        const { asset, metadata } = matches[0]!;
+        sourceImages.push({ assetId: asset.id, checksum: asset.checksum, sourceRef: ref!, width: metadata.width, height: metadata.height, anonymized: metadata.variant === 'ANONYMIZED' });
+      }
+      input = productionInputSchema.parse({ ...input, sourceImages });
+      assertSourceImageBindings(input, story.post.id);
+    }
     const run = await tx.productionRun.create({ data: {
       workspaceId: context.workspaceId, storyProjectId, requestedById: context.userId, idempotencyKey: `${route}:${randomKey()}`,
-      status: 'QUEUED', currentStage: input.mode === 'CREATE' || input.mode === 'REGENERATE' ? 'SCRIPT_GENERATION' : 'TTS_GENERATION', input: input as unknown as Prisma.InputJsonObject,
+      status: 'QUEUED', currentStage: ['CREATE', 'REGENERATE', 'SCRIPT_ONLY'].includes(input.mode) ? 'SCRIPT_GENERATION' : 'TTS_GENERATION', input: input as unknown as Prisma.InputJsonObject,
     } });
     const renderJob = await tx.renderJob.create({ data: { workspaceId: context.workspaceId, productionRunId: run.id, status: 'QUEUED' } });
     const event = await tx.outboxEvent.create({ data: { workspaceId: context.workspaceId, eventType: 'PRODUCTION_RUN_REQUESTED', aggregateId: run.id, payload: { entityId: run.id, workspaceId: context.workspaceId, version: 1 } } });

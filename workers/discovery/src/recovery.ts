@@ -11,7 +11,7 @@ export async function recoverDiscoveryJobs(db: PrismaClient, queue: Queue<Discov
   const cutoff = new Date(now.getTime() - Math.max(30_000, config.DISCOVERY_RELAY_INTERVAL_MS * 2));
   const events = await db.$queryRaw<Array<{ id: string; workspaceId: string }>>`
     SELECT e."id", e."workspaceId" FROM "OutboxEvent" e
-    WHERE e."eventType" IN ('SOURCE_POST_IMPORTED', 'SOURCE_SYNC_REQUESTED') AND e."publishedAt" <= ${cutoff}
+    WHERE e."eventType" IN ('SOURCE_POST_IMPORTED', 'SOURCE_SYNC_REQUESTED', 'LOCAL_CAPTURE_PURGE_REQUESTED') AND e."publishedAt" <= ${cutoff}
       AND COALESCE(e."payload"->>'recoveryExhausted', 'false') <> 'true'
       AND COALESCE(e."payload"->>'recoveryCheckedAt', '') <= ${cutoff.toISOString()}
       AND NOT EXISTS (SELECT 1 FROM "OutboxEvent" newer
@@ -21,7 +21,8 @@ export async function recoverDiscoveryJobs(db: PrismaClient, queue: Queue<Discov
         SELECT 1 FROM "SourcePost" p WHERE p."id" = e."aggregateId" AND p."workspaceId" = e."workspaceId" AND p."deletedAt" IS NULL
           AND NOT EXISTS (SELECT 1 FROM "ContentCandidate" c WHERE c."sourcePostId" = p."id" AND c."workspaceId" = p."workspaceId")))
         OR (e."eventType" = 'SOURCE_SYNC_REQUESTED' AND EXISTS (
-          SELECT 1 FROM "SourceSyncRun" r WHERE r."id" = e."aggregateId" AND r."workspaceId" = e."workspaceId" AND r."status" IN ('QUEUED', 'RETRYING'))))
+          SELECT 1 FROM "SourceSyncRun" r WHERE r."id" = e."aggregateId" AND r."workspaceId" = e."workspaceId" AND r."status" IN ('QUEUED', 'RETRYING')))
+        OR (e."eventType" = 'LOCAL_CAPTURE_PURGE_REQUESTED' AND COALESCE(e."payload"->>'cleaned', 'false') <> 'true'))
     ORDER BY COALESCE(e."payload"->>'recoveryCheckedAt', ''), e."publishedAt", e."id" LIMIT ${config.DISCOVERY_BATCH_SIZE}`;
   let recovered = 0;
   for (const candidate of events) {
@@ -39,7 +40,7 @@ export async function recoverDiscoveryJobs(db: PrismaClient, queue: Queue<Discov
       if (event.eventType === 'SOURCE_POST_IMPORTED') {
         const post = await tx.sourcePost.findFirst({ where: { id: event.aggregateId, workspaceId: event.workspaceId, deletedAt: null, candidates: { none: {} } }, select: { id: true } });
         if (!post) return 0;
-      } else {
+      } else if (event.eventType === 'SOURCE_SYNC_REQUESTED') {
         const run = await tx.sourceSyncRun.findFirst({ where: { id: event.aggregateId, workspaceId: event.workspaceId }, select: { id: true, status: true, attempts: true } });
         if (!run || !['QUEUED', 'RETRYING'].includes(run.status)) return 0;
         if (run.attempts >= config.DISCOVERY_RETRY_ATTEMPTS) {

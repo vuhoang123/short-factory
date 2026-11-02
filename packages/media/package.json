@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./composition": "./src/composition.tsx",
-    "./contracts": "./src/contracts.ts"
+    "./contracts": "./src/contracts.ts",
+    "./comment-selection": "./src/comment-selection.ts"
   },
   "scripts": { "typecheck": "tsc --noEmit", "build": "tsc --noEmit", "test": "vitest run src" },
   "dependencies": {

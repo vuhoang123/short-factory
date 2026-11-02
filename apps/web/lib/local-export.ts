@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parseCommentImport } from './comment-import';
 
 const referenceUrl = z.string().trim().url().max(2048).refine((value) => {
   const url = new URL(value);
@@ -33,7 +34,7 @@ const referenceUrl = z.string().trim().url().max(2048).refine((value) => {
 
 const draftSchema = z.object({
   canonicalUrl: referenceUrl, title: z.string().trim().max(300), body: z.string().trim().min(1).max(50_000),
-  comments: z.string().max(80_008), channelId: z.string().uuid(),
+  comments: z.string().max(200000), channelId: z.string().uuid(),
   basis: z.enum(['OWNED', 'LICENSED', 'CONSENTED']), evidence: z.string().trim().max(4000),
   territory: z.string().trim().min(1).max(100).refine((value) => value !== 'UNSPECIFIED', 'Cần phạm vi lãnh thổ.'),
   allowedPlatforms: z.array(z.enum(['YOUTUBE', 'FACEBOOK', 'TIKTOK'])).min(1).max(3),
@@ -45,10 +46,10 @@ const draftSchema = z.object({
 
 export function createLocalImport(raw: unknown) {
   const input = draftSchema.parse(raw);
-  const comments = z.array(z.string().trim().min(1).max(10_000)).max(8, 'Tối đa 8 bình luận trong một video.').parse(input.comments.split(/\r?\n/).map((line) => line.trim()).filter(Boolean));
+  const comments = parseCommentImport(input.comments);
   return {
     platform: 'MANUAL' as const, canonicalUrl: input.canonicalUrl, title: input.title || undefined, body: input.body, channelId: input.channelId,
-    comments: comments.map((body, index) => ({ externalId: `c${index + 1}`, body })),
+    comments,
     rights: { basis: input.basis, attested: input.attested, commercialAllowed: input.commercialAllowed,
       allowedPlatforms: [...new Set(input.allowedPlatforms)], territory: input.territory,
       ...(input.evidence ? { evidence: input.evidence } : {}), attributionRequired: input.attributionRequired,
@@ -67,8 +68,9 @@ export async function getOperationKey(keys: OperationKeys, operation: string, pa
 
 const id = z.string().uuid();
 export const exportProgressSchema = z.object({
+  anonymizeAuthors: z.boolean().optional(),
   postId: id.optional(), runId: id.optional(), videoId: id.optional(), channelId: id.optional(), voiceProfileId: z.string().max(100).optional(),
-  duration: z.number().int().min(10).max(120).optional(), commentIds: z.array(id).max(8).optional(),
+  duration: z.number().int().min(10).max(120).optional(), commentIds: z.array(id).max(10).optional(), commentMode: z.enum(['MANUAL', 'TOP_REACTIONS']).optional(),
   keys: z.record(z.string(), z.object({ fingerprint: z.string().regex(/^[a-f0-9]{64}$/), key: id }).strict()).default({}),
 }).strict();
 export type ExportProgress = z.infer<typeof exportProgressSchema>;

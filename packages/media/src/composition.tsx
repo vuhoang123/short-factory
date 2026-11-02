@@ -2,6 +2,15 @@ import { AbsoluteFill, Audio, Img, Sequence, interpolate, spring, useCurrentFram
 import type { CompositionInput } from './contracts';
 import { FacebookCommentCard, FacebookPostCard, ManualCommentCard, ManualPostCard, RedditCommentCard, RedditPostCard, ThreadsCommentCard, ThreadsPostCard, type CardTheme } from './cards';
 import { subtitlePresets } from './subtitles';
+import { sourceImagePan, sourceImageShots } from './source-images';
+
+function OriginalImage({ input, image, duration }: { input: CompositionInput; image: NonNullable<CompositionInput['manifest']['sourceImages']>[number]; duration: number }) {
+  const frame = useCurrentFrame();
+  const source = input.sourceImageSources?.[image.assetId];
+  if (!source) throw new Error('SOURCE_IMAGE_MISSING');
+  const pan = sourceImagePan(image.width, image.height, frame, duration);
+  return <AbsoluteFill style={{ alignItems: 'center', justifyContent: 'center', paddingBottom: 320 }}><div style={{ width: pan.width, height: Math.min(1160, pan.height), overflow: 'hidden', borderRadius: 12, boxShadow: '0 20px 70px #0008' }}><Img src={source} style={{ display: 'block', width: pan.width, height: pan.height, transform: `translateY(${pan.offsetY}px)` }} /></div></AbsoluteFill>;
+}
 
 function selectPostCard(platform: CompositionInput['manifest']['platform']) {
   if (platform === 'REDDIT') return RedditPostCard;
@@ -43,7 +52,7 @@ function SegmentCard({ input, segmentId, templateId }: { input: CompositionInput
     const commentId = segment.sourceRefs.find((ref) => ref.startsWith('comment:'))?.slice('comment:'.length);
     const comment = input.comments.find((candidate) => candidate.id === commentId);
     const Card = selectCommentCard(platform);
-    return <div style={cardStyle}><Card {...shared} body={comment?.body ?? segment.text} authorAlias={comment?.authorAlias} attribution={attribution} highlighted /></div>;
+    return <div style={cardStyle}><Card {...shared} body={segment.text} authorAlias={comment?.authorAlias} attribution={attribution} highlighted /></div>;
   }
 
   if (segment.type === 'POST' || segment.type === 'HOOK') {
@@ -78,14 +87,14 @@ export function StoryComposition(input: CompositionInput) {
   const duration = input.manifest.durationFrames;
   return <AbsoluteFill style={{ overflow: 'hidden', fontFamily: 'Arial, "Noto Sans", sans-serif' }}>
     <Background src={input.backgroundSrc} />
-    {input.manifest.visualSegments.map((segment) => <Sequence key={segment.id} from={segment.startFrame} durationInFrames={Math.max(1, segment.endFrame - segment.startFrame)}>
+    {input.manifest.sourceImages ? sourceImageShots(input.manifest).map((shot) => <Sequence key={`${shot.image.assetId}-${shot.startFrame}`} from={shot.startFrame} durationInFrames={shot.endFrame - shot.startFrame}><OriginalImage input={input} image={shot.image} duration={shot.endFrame - shot.startFrame} /></Sequence>) : input.manifest.visualSegments.map((segment) => <Sequence key={segment.id} from={segment.startFrame} durationInFrames={Math.max(1, segment.endFrame - segment.startFrame)}>
       <AbsoluteFill style={{ alignItems: 'center', justifyContent: segment.type === 'HOOK' ? 'center' : 'center', padding: '120px 82px 390px', boxSizing: 'border-box' }}>
         <SegmentCard input={input} segmentId={segment.id} templateId={input.manifest.templateId} />
       </AbsoluteFill>
     </Sequence>)}
     {input.manifest.audioAssets.map((asset) => {
       const src = input.audioSources[asset.assetId];
-      return src ? <Sequence key={asset.assetId} from={asset.startFrame} durationInFrames={Math.min(asset.durationFrames, duration - asset.startFrame)}><Audio src={src} volume={input.manifest.audioLevels.narration} /></Sequence> : null;
+      return src ? <Sequence key={asset.segmentId} from={asset.startFrame} durationInFrames={Math.min(asset.durationFrames, duration - asset.startFrame)}><Audio src={src} volume={input.manifest.audioLevels.narration} /></Sequence> : null;
     })}
     <SubtitleOverlay input={input} />
     {input.manifest.attribution.required && input.manifest.attribution.text && <div style={{ position: 'absolute', bottom: 80, left: 60, right: 60, color: '#fff', fontSize: 18, textAlign: 'center', textShadow: '0 2px 5px #000', overflowWrap: 'anywhere' }}>{input.manifest.attribution.text}</div>}

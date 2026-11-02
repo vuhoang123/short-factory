@@ -25,17 +25,16 @@ const steps = [
   {
     number: '04',
     title: 'Duyệt quyền trước, duyệt ứng viên sau',
-    description: 'Ở Duyệt quyền sử dụng (Rights reviews), kiểm tra bằng chứng, phạm vi thương mại, nền tảng được phép, lãnh thổ, ghi công và ngày hết hạn. Sau khi quyền và cảnh báo an toàn đã đạt, vào Thư viện bài đăng → “Scored candidates” để xem điểm và duyệt hoặc từ chối ứng viên.',
+    description: 'Trong Discover, mở chi tiết bài để kiểm tra bằng chứng, phạm vi thương mại, nền tảng được phép, lãnh thổ, ghi công và ngày hết hạn. Duyệt quyền, xác nhận chọn bài đủ điểm rồi tiếp tục thẳng vào Studio. Các công cụ Reviews và Library cũ vẫn nằm trong “Công cụ & hướng dẫn”.',
     actions: [
-      { href: '/reviews', label: 'Mở Duyệt quyền sử dụng' },
-      { href: '/library/posts', label: 'Mở Thư viện bài đăng' },
+      { href: '/discover', label: 'Mở Discover' },
     ],
   },
   {
     number: '05',
     title: 'Tạo, kiểm tra và duyệt video',
-    description: 'Trong Story studio, chọn ứng viên đã duyệt, bình luận, kênh, giọng đọc và mẫu video. Kiểm tra/chỉnh kịch bản, tạo bản render rồi xem trước và ghi quyết định duyệt video. Ảnh nền phải thuộc quyền sử dụng của bạn. Giọng “mock” chỉ là âm thanh kiểm thử.',
-    actions: [{ href: '/studio', label: 'Mở Story studio' }],
+    description: 'Studio mở đúng bài đã chọn. Chọn bình luận và giọng đọc, bấm “Tạo bản nháp kịch bản”, sửa và lưu phiên bản, rồi bấm “Tạo video MP4”. Xem kết quả, duyệt video và tải về. Ảnh nền phải thuộc quyền sử dụng của bạn. Giọng “mock” chỉ là âm thanh kiểm thử.',
+    actions: [{ href: '/studio', label: 'Mở Studio' }, { href: '/studio?mode=import', label: 'Dán link Facebook/Threads' }],
   },
 ] as const;
 

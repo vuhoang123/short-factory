@@ -5,7 +5,7 @@ import { z } from 'zod';
 import type { WorkerConfig } from './config.js';
 import type { DiscoveryEnvelope } from './pipeline.js';
 
-const supportedEvents = ['SOURCE_SYNC_REQUESTED', 'SOURCE_POST_IMPORTED'] as const;
+const supportedEvents = ['SOURCE_SYNC_REQUESTED', 'SOURCE_POST_IMPORTED', 'BROWSER_CAPTURE_REQUESTED', 'LOCAL_CAPTURE_PURGE_REQUESTED'] as const;
 const deliverySchema = z.object({ version: z.number().int().positive().default(1), recoveryAttempts: z.number().int().nonnegative().default(0) }).passthrough();
 
 /** Queue insertion is repeatable by the durable outbox event ID; only then mark the event delivered. */

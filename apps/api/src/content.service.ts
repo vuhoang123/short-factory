@@ -1,8 +1,10 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { Request } from 'express';
 import { Prisma, type ContentRight, type PrismaClient } from '@shorts-factory/database';
 import { evaluateRights, hashPostContent, normalizeText, redactPersonalData } from '@shorts-factory/shared';
-import { detectSensitiveFlags } from '@shorts-factory/sources';
+import { captureInputSchema, captureRequestSchema, captureUrlSchema, localCaptureCall, detectSensitiveFlags } from '@shorts-factory/sources';
+import { selectTopComments } from '@shorts-factory/media';
+import { z } from 'zod';
 import { AuthService, adminRoles, editRoles, reviewRoles, type AuthContext } from './auth/auth.service.js';
 import { ApiError, notFound } from './errors.js';
 import { mutationIdentity } from './idempotency.js';
@@ -23,6 +25,59 @@ function evaluateStoredRights(rights: ContentRight | undefined, platform: string
 
 export class ContentService {
   constructor(readonly db: PrismaClient, readonly auth: AuthService) {}
+
+  async openCaptureBrowser(request: Request, raw: unknown) {
+    const context = await this.auth.context(request, editRoles);
+    const { url } = z.object({ url: captureUrlSchema }).strict().parse(raw);
+    try { await localCaptureCall('open', { workspaceId: context.workspaceId, userId: context.userId, url }, 65_000); }
+    catch (error) { throw new ApiError(409, error instanceof Error ? error.message : 'LOCAL_CAPTURE_UNAVAILABLE', 'Chưa mở được trình duyệt chụp. Chạy pnpm local:capture:setup và khởi động lại pnpm local:export; sau đó đăng nhập trong cửa sổ riêng.'); }
+    return { opened: true };
+  }
+
+  async createCapture(request: Request, raw: unknown) {
+    const context = await this.auth.context(request, editRoles);
+    const input = captureRequestSchema.parse(raw);
+    if (process.env.NODE_ENV === 'production' || process.env.LOCAL_CAPTURE_ENABLED !== '1') throw new ApiError(409, 'LOCAL_CAPTURE_DISABLED', 'Chạy pnpm local:capture:setup rồi khởi động lại pnpm local:export.');
+    return this.mutation(request, context, '/source-captures', input, async tx => {
+      if (!await tx.contentChannel.findFirst({ where: { id: input.channelId, workspaceId: context.workspaceId } })) return notFound();
+      const active = await tx.workflowRun.count({ where: { workspaceId: context.workspaceId, entityType: 'LOCAL_CAPTURE', status: { in: ['QUEUED', 'RUNNING'] }, input: { path: ['requestedById'], equals: context.userId } } });
+      if (active) throw new ApiError(409, 'CAPTURE_ALREADY_RUNNING', 'Đợi hoặc hủy lượt chụp hiện tại trước.');
+      const id = randomUUID();
+      await tx.workflowRun.create({ data: { id, workspaceId: context.workspaceId, entityType: 'LOCAL_CAPTURE', entityId: id, status: 'QUEUED', input: { ...input, requestedById: context.userId } } });
+      await this.event(tx, context, 'BROWSER_CAPTURE_REQUESTED', id);
+      await this.audit(tx, context, 'LOCAL_CAPTURE_REQUESTED', 'WorkflowRun', id);
+      return { id, status: 'QUEUED' };
+    });
+  }
+
+  async capture(request: Request, id: string) {
+    const context = await this.auth.context(request);
+    const run = await this.db.workflowRun.findFirst({ where: { id, workspaceId: context.workspaceId, entityType: 'LOCAL_CAPTURE' } });
+    if (!run || run.status === 'TAKEN_DOWN' || captureInputSchema.parse(run.input).requestedById !== context.userId) return notFound();
+    return { id: run.id, status: run.status, errorCode: run.errorCode, output: run.output };
+  }
+
+  async cancelCapture(request: Request, id: string) {
+    const context = await this.auth.context(request, editRoles);
+    const result = await this.mutation(request, context, `/source-captures/${id}/cancel`, {}, async tx => {
+      const run = await tx.workflowRun.findFirst({ where: { id, workspaceId: context.workspaceId, entityType: 'LOCAL_CAPTURE' } });
+      if (!run || run.status === 'TAKEN_DOWN' || captureInputSchema.parse(run.input).requestedById !== context.userId) return notFound();
+      if (['QUEUED', 'RUNNING'].includes(run.status)) {
+        await tx.workflowRun.updateMany({ where: { id, workspaceId: context.workspaceId, version: run.version }, data: { status: 'CANCELLED', leaseUntil: null, version: { increment: 1 } } });
+        await tx.outboxEvent.create({ data: { workspaceId: context.workspaceId, aggregateId: id, eventType: 'LOCAL_CAPTURE_PURGE_REQUESTED', payload: { workspaceId: context.workspaceId, userId: context.userId, jobId: id } } });
+      }
+      return { id, status: ['QUEUED', 'RUNNING'].includes(run.status) ? 'CANCELLED' : run.status };
+    });
+    if (result && typeof result === 'object' && !Array.isArray(result) && result.status === 'CANCELLED') await localCaptureCall('cancel', { workspaceId: context.workspaceId, userId: context.userId, jobId: id }, 5000).catch(() => undefined);
+    return result;
+  }
+
+  async sourceImages(request: Request, id: string) {
+    const context = await this.auth.context(request);
+    if (!await this.db.sourcePost.findFirst({ where: { id, workspaceId: context.workspaceId, deletedAt: null } })) return notFound();
+    const assets = await this.db.mediaAsset.findMany({ where: { workspaceId: context.workspaceId, kind: 'SOURCE_CAPTURE', metadata: { path: ['postId'], equals: id } }, select: { id: true, metadata: true } });
+    return { items: assets };
+  }
 
   private async mutation(request: Request, context: AuthContext, route: string, input: unknown, work: (tx: Prisma.TransactionClient) => Promise<Prisma.InputJsonObject>) {
     const { key, requestHash } = mutationIdentity(request, input);
@@ -164,6 +219,14 @@ export class ContentService {
     return { items: items.slice(0, page.limit), nextCursor: items.length > page.limit ? items[page.limit - 1]?.id ?? null : null };
   }
 
+  async commentSelection(request: Request, id: string, raw: unknown) {
+    const { workspaceId } = await this.auth.context(request);
+    const { duration } = z.object({ duration: z.coerce.number().int().min(10).max(120).default(40) }).strict().parse(raw);
+    if (!await this.db.sourcePost.findFirst({ where: { workspaceId, id, deletedAt: null }, select: { id: true } })) return notFound();
+    const comments = await this.db.sourceComment.findMany({ where: { workspaceId, sourcePostId: id }, orderBy: [{ likes: { sort: 'desc', nulls: 'last' } }, { id: 'asc' }], take: 500, select: { id: true, body: true, likes: true, sensitiveFlags: true } });
+    return selectTopComments(comments, duration);
+  }
+
   async review(request: Request, id: string, raw: unknown) {
     const context = await this.auth.context(request, reviewRoles);
     const input = reviewSchema.parse(raw);
@@ -210,7 +273,9 @@ export class ContentService {
       const runIds = runs.map((run) => run.id);
       const videos = storyIds.length ? await tx.video.findMany({ where: { workspaceId: context.workspaceId, storyProjectId: { in: storyIds } }, select: { id: true, mediaAssetId: true } }) : [];
       const audios = storyIds.length ? await tx.audioAsset.findMany({ where: { workspaceId: context.workspaceId, storyVersion: { storyProjectId: { in: storyIds } } }, select: { mediaAssetId: true } }) : [];
-      const mediaAssetIds = [...new Set([...videos.map((video) => video.mediaAssetId), ...audios.map((audio) => audio.mediaAssetId), ...evidenceAssets.map((right) => right.evidenceAssetId)].filter((id): id is string => Boolean(id)))];
+      const sourceImages = await tx.mediaAsset.findMany({ where: { workspaceId: context.workspaceId, kind: 'SOURCE_CAPTURE', metadata: { path: ['postId'], equals: post.id } }, select: { id: true } });
+      await tx.workflowRun.updateMany({ where: { workspaceId: context.workspaceId, entityType: 'LOCAL_CAPTURE', entityId: post.id }, data: { status: 'TAKEN_DOWN', input: Prisma.DbNull, output: Prisma.DbNull } });
+      const mediaAssetIds = [...new Set([...sourceImages.map(image => image.id), ...videos.map((video) => video.mediaAssetId), ...audios.map((audio) => audio.mediaAssetId), ...evidenceAssets.map((right) => right.evidenceAssetId)].filter((id): id is string => Boolean(id)))];
       await tx.sourceComment.deleteMany({ where: { workspaceId: context.workspaceId, sourcePostId: post.id } });
       await tx.contentRight.updateMany({ where: { workspaceId: context.workspaceId, sourcePostId: post.id }, data: { reviewStatus: 'BLOCKED', revokedAt: new Date(), evidence: null, attributionText: null, evidenceAssetId: null } });
       await tx.sourcePost.update({ where: { workspaceId_id: { workspaceId: context.workspaceId, id: post.id } }, data: { body: '[removed]', title: null, authorAlias: null, canonicalUrl: 'https://example.invalid/removed', deletedAt: post.deletedAt ?? new Date() } });

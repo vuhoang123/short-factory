@@ -35,10 +35,14 @@ export class LocalObjectStore {
 }
 
 export * from './contracts.js';
+export * from './comment-selection.js';
 export * from './script.js';
+export * from './narration.js';
+export * from './local-narration.js';
 export * from './alignment.js';
 export * from './tts.js';
 export * from './subtitles.js';
 export * from './manifest.js';
 export * from './background.js';
+export * from './source-images.js';
 export * from './render.js';

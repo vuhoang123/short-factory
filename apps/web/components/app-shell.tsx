@@ -16,17 +16,11 @@ export function useSession() {
 }
 
 const navigation = [
-  { path: '/guide', label: 'Hướng dẫn sử dụng', mark: '?' },
-  { path: '/export', label: 'Xuất video local', mark: '↓' },
   { path: '/dashboard', label: 'Overview', mark: '▦' },
-  { path: '/channels', label: 'Content channels', mark: '▤' },
-  { path: '/sources', label: 'Sources', mark: '↗' },
-  { path: '/library/posts', label: 'Post library', mark: '▧' },
-  { path: '/reviews', label: 'Rights reviews', mark: '✓' },
-  { path: '/studio', label: 'Story studio', mark: '▶' },
-  { path: '/autopilot', label: 'Content autopilot', mark: '⇄' },
+  { path: '/discover', label: 'Discover', mark: '◎' },
+  { path: '/studio', label: 'Studio', mark: '▶' },
+  { path: '/publish', label: 'Publish', mark: '↥' },
   { path: '/analytics', label: 'Analytics', mark: '↗' },
-  { path: '/settings', label: 'Workspace settings', mark: '⚙' },
 ];
 
 export function WorkspaceForm({ onCreated }: { onCreated: () => Promise<void> }) {
@@ -89,6 +83,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <Link href="/dashboard" className="brand"><span className="brand-mark" aria-hidden="true">sf</span>shorts factory</Link>
         <div className="workspace-picker"><label htmlFor="active-workspace">Workspace</label><select id="active-workspace" value={session.activeWorkspaceId ?? ''} onChange={(event) => void selectWorkspace(event.target.value)} disabled={switching || session.workspaces.length === 0}>{!workspace && <option value="">No workspace selected</option>}{session.workspaces.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>{workspace && <span className="workspace-role">{workspace.role.toLowerCase()} access</span>}</div>
         <nav aria-label="Main navigation">{navigation.map((item) => <Link key={item.path} href={item.path} className={`nav-link${pathname === item.path ? ' active' : ''}`} aria-current={pathname === item.path ? 'page' : undefined}><span aria-hidden="true">{item.mark}</span>{item.label}</Link>)}</nav>
+        <nav aria-label="Workspace tools" className="secondary-navigation"><Link className={`nav-link${pathname === '/settings' ? ' active' : ''}`} href="/settings" aria-current={pathname === '/settings' ? 'page' : undefined}>⚙ Settings</Link><details><summary>Công cụ & hướng dẫn</summary>{[{ path: '/export', label: 'Xuất video local' }, { path: '/guide', label: 'Hướng dẫn sử dụng' }, { path: '/channels', label: 'Content channels' }, { path: '/sources', label: 'Sources' }, { path: '/library/posts', label: 'Post library' }, { path: '/reviews', label: 'Rights reviews' }, { path: '/autopilot', label: 'Content autopilot' }].map((item) => <Link key={item.path} href={item.path} className="nav-link" aria-current={pathname === item.path ? 'page' : undefined}>{item.label}</Link>)}</details></nav>
         <div className="sidebar-bottom"><div className="phase-note"><span className="status-dot" aria-hidden="true" /><strong>Human-reviewed workspace</strong><p>Discover, score and check rights.</p></div><div className="user-row"><span className="avatar" aria-hidden="true">{(session.user.name || session.user.email).slice(0, 1).toUpperCase()}</span><div><strong>{session.user.name || 'Workspace member'}</strong><span>{session.user.email}</span></div></div><button className="text-button signout" onClick={() => void logout()}>Sign out <span aria-hidden="true">↪</span></button></div>
       </aside>
       <div className="workspace-main"><header className="topbar"><span>Editorial workspace</span><span className="topbar-mode"><span className="status-dot" aria-hidden="true" />Manual import enabled</span><button className="text-button mobile-signout" onClick={() => void logout()}>Sign out</button></header>

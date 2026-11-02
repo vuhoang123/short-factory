@@ -1,0 +1,89 @@
+{
+  "source_image_id": "bea2a6e7cc6b44f3949640349012de1c",
+  "anonymous_image_id": "f039509771f1470e8dbddb37bd0999af",
+  "capture_diagnostic_image_id": null,
+  "url": "https://www.facebook.com/owned-fixture/posts/synthetic",
+  "platform": "facebook",
+  "author": "Thư viện thử nghiệm",
+  "text": "Một thư viện nhỏ mở cửa cuối tuần. Mọi người mang sách đến chia sẻ và cùng đọc mỗi ngày.",
+  "comments": [
+    {
+      "source_image_id": "59572d8f991d4eb6a60fb08aba28311d",
+      "anonymous_image_id": "502b126bf7c1414e8d60c05d620e7282",
+      "author": "Bạn đọc 1",
+      "text": "Bình luận thử số 1: mình rất thích hoạt động đọc sách cùng hàng xóm.",
+      "selected": true,
+      "reaction_count": 100,
+      "reply_count": null,
+      "voice": "female",
+      "before_effect_enabled": true,
+      "before_effect_upload_id": null,
+      "effect_enabled": true,
+      "effect_upload_id": null
+    },
+    {
+      "source_image_id": "37d03683000648aeb23a9207ff711296",
+      "anonymous_image_id": "0dcebc95c624404ea03ff7cb41bb597c",
+      "author": "Bạn đọc 2",
+      "text": "Bình luận thử số 2: mình rất thích hoạt động đọc sách cùng hàng xóm.",
+      "selected": true,
+      "reaction_count": 90,
+      "reply_count": null,
+      "voice": "female",
+      "before_effect_enabled": true,
+      "before_effect_upload_id": null,
+      "effect_enabled": true,
+      "effect_upload_id": null
+    },
+    {
+      "source_image_id": "c8f9ef3c58b5425fa44dc5c4a8ed5d99",
+      "anonymous_image_id": "708544dcebc34317873ebb941eef0a8a",
+      "author": "Bạn đọc 3",
+      "text": "Bình luận thử số 3: mình rất thích hoạt động đọc sách cùng hàng xóm.",
+      "selected": true,
+      "reaction_count": 80,
+      "reply_count": null,
+      "voice": "female",
+      "before_effect_enabled": true,
+      "before_effect_upload_id": null,
+      "effect_enabled": true,
+      "effect_upload_id": null
+    },
+    {
+      "source_image_id": "4e1c40c1a1b648b28240c6b775e8028f",
+      "anonymous_image_id": "f6786dbdc09843269267fe82903cf5d5",
+      "author": "Bạn đọc 4",
+      "text": "Bình luận thử số 4: mình rất thích hoạt động đọc sách cùng hàng xóm.",
+      "selected": true,
+      "reaction_count": 70,
+      "reply_count": null,
+      "voice": "female",
+      "before_effect_enabled": true,
+      "before_effect_upload_id": null,
+      "effect_enabled": true,
+      "effect_upload_id": null
+    },
+    {
+      "source_image_id": "7640e192fff04f2bbe60d47c216de152",
+      "anonymous_image_id": "112e95d872a543bd81b8ce2bd7bc765c",
+      "author": "Bạn đọc 5",
+      "text": "Bình luận thử số 5: mình rất thích hoạt động đọc sách cùng hàng xóm.",
+      "selected": true,
+      "reaction_count": 60,
+      "reply_count": null,
+      "voice": "female",
+      "before_effect_enabled": true,
+      "before_effect_upload_id": null,
+      "effect_enabled": true,
+      "effect_upload_id": null
+    }
+  ],
+  "warnings": [
+    "Ảnh cắt gốc: 6/6 thẻ. Chỉ giữ số like/tim/react đang hiện trên trang tại lúc nhập; không suy đoán số ẩn. Hãy xem ảnh trước khi xuất."
+  ],
+  "comment_order": "default",
+  "comment_order_note": "",
+  "comment_pool_size": 0,
+  "comment_link_results": [],
+  "image_id": null
+}

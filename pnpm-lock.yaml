@@ -297,6 +297,9 @@ importers:
       '@shorts-factory/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@shorts-factory/media':
+        specifier: workspace:*
+        version: link:../../packages/media
       '@shorts-factory/shared':
         specifier: workspace:*
         version: link:../../packages/shared

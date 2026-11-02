@@ -48,9 +48,9 @@ async function stop(child: ChildProcess) {
 }
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 let cookie = '';
-async function api(route: string, body?: object, key = randomUUID()): Promise<unknown> {
+async function api(route: string, body?: object, key = randomUUID(), method?: 'PATCH'): Promise<unknown> {
   const response = await fetch(`${origin}/api/v1${route}`, {
-    method: body === undefined ? 'GET' : 'POST',
+    method: method ?? (body === undefined ? 'GET' : 'POST'),
     headers: { Origin: origin, ...(cookie ? { Cookie: cookie } : {}), ...(body === undefined ? {} : { 'Content-Type': 'application/json', 'Idempotency-Key': key }) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(15_000),
   });
@@ -145,18 +145,35 @@ try {
   await api(`/production-runs/${timed.runId}/retry`, {});
   const completed = await waitRun(timed.runId, (run) => run.status === 'SUCCEEDED', 600_000);
   assert.equal(completed.attempts, 2, 'Explicit retry must have a fresh durable attempt budget.');
-  const video = completed.videos.find((item) => item.mediaAsset);
+  const draft = object(await api(`/candidates/${candidateId}/produce`, { channelId: channel.id, commentIds: comments.map((item) => item.id), language: 'vi', voiceProfileId: 'mock:default', targetDurationSec: 10, draftOnly: true }));
+  const draftRun = await waitRun(uuid(draft.runId), (run) => run.status === 'SUCCEEDED');
+  assert.equal(draftRun.currentStage, 'SCRIPT_READY');
+  assert.equal(draftRun.videos.length, 0, 'A script draft must not create video output.');
+  const storyId = uuid(draft.storyProjectId);
+  const story = object(await api(`/stories/${storyId}`));
+  assert(Array.isArray(story.versions) && story.versions.length > 0);
+  const latestVersion = object(story.versions[0]);
+  assert(Array.isArray(latestVersion.audioAssets) && latestVersion.audioAssets.length === 0, 'A script draft must not synthesize audio.');
+  const script = object(latestVersion.script);
+  assert(typeof latestVersion.version === 'number');
+  await api(`/stories/${storyId}`, { expectedVersion: latestVersion.version, script }, randomUUID(), 'PATCH');
+  const renderKey = randomUUID();
+  const studioRender = object(await api(`/stories/${storyId}/render`, { theme: 'light', subtitlePreset: 'ClassicCaption' }, renderKey));
+  const replay = object(await api(`/stories/${storyId}/render`, { theme: 'light', subtitlePreset: 'ClassicCaption' }, renderKey));
+  assert.equal(replay.runId, studioRender.runId);
+  const studioCompleted = await waitRun(uuid(studioRender.runId), (run) => run.status === 'SUCCEEDED', 600_000);
+  const video = studioCompleted.videos.find((item) => item.mediaAsset);
   assert(video?.mediaAsset);
   await api(`/videos/${video.id}/reviews`, { decision: 'APPROVED' });
   const download = await fetch(`${origin}/api/v1/media/${video.mediaAsset.id}?download=1`, { headers: { Cookie: cookie }, signal: AbortSignal.timeout(30_000) });
   assert(download.ok); assert.match(download.headers.get('content-disposition') ?? '', /attachment/);
   const bytes = Buffer.from(await download.arrayBuffer()); assert.equal(bytes.toString('ascii', 4, 8), 'ftyp');
   const history = { items: items(await api('/production-runs?limit=20')).map((item) => { const value = object(item); assert(typeof value.status === 'string'); return { id: uuid(value.id), status: value.status }; }) };
-  assert.equal(history.items.length, 3);
+  assert.equal(history.items.length, 5);
   assert(history.items.some((run) => run.id === queued.runId && run.status === 'CANCELLED'));
   await mkdir('test-results', { recursive: true });
   await writeFile('test-results/phase6-smoke.mp4', bytes);
-  const evidence = { status: 'PASS', workspaceId: workspace.id, queuedCancel: true, runningCancel: true, cancelMs, timeoutCode: timeout.errorCode, timeoutMs, explicitRetry: true, retryAttempts: completed.attempts, historyRuns: history.items.length, commentCount: comments.length, bytes: bytes.length, elapsedMs: Date.now() - started, audio: 'MOCK_TEST_TONE', database: 'dedicated_test', publishing: 'not_called' };
+  const evidence = { status: 'PASS', workspaceId: workspace.id, queuedCancel: true, runningCancel: true, cancelMs, timeoutCode: timeout.errorCode, timeoutMs, explicitRetry: true, retryAttempts: completed.attempts, scriptDraftWithoutMedia: true, savedVersionBeforeRender: true, explicitStoryRender: true, renderIdempotency: true, historyRuns: history.items.length, commentCount: comments.length, bytes: bytes.length, elapsedMs: Date.now() - started, audio: 'MOCK_TEST_TONE', database: 'dedicated_test', publishing: 'not_called' };
   await writeFile('test-results/phase6-smoke.json', JSON.stringify(evidence, null, 2));
   process.stdout.write(`${JSON.stringify(evidence)}\n`);
 } finally {

@@ -8,7 +8,7 @@ test('all workspace routes settle without repeated fetching or update-depth erro
   page.on('console', (message) => { if (/Maximum update depth|Too many re-renders/.test(message.text())) errors.push(message.text()); });
   let requests = 0;
   page.on('request', (request) => { if (new URL(request.url()).pathname.startsWith('/api/v1/')) requests++; });
-  for (const route of ['/dashboard', '/channels', '/sources', '/library/posts', '/reviews', '/studio', '/export', '/autopilot', '/analytics', '/settings', '/guide']) {
+  for (const route of ['/dashboard', '/discover', '/publish', '/channels', '/sources', '/library/posts', '/reviews', '/studio', '/export', '/autopilot', '/analytics', '/settings', '/guide']) {
     await page.goto(route);
     await expect(page.locator('h1')).toBeVisible();
     await page.waitForLoadState('networkidle');
@@ -59,7 +59,7 @@ test('slow background polling stays single-flight and stops when leaving the pag
     await expect.poll(() => requests).toBe(1);
     await page.clock.runFor(20_000);
     expect(requests).toBe(1);
-    await page.getByRole('link', { name: 'Workspace settings', exact: true }).click();
+    await page.getByRole('link', { name: '⚙ Settings', exact: true }).click();
     await expect(page).toHaveURL(/\/settings$/);
     await expect.poll(() => aborted).toBe(true);
     await page.clock.runFor(30_000);
@@ -69,28 +69,34 @@ test('slow background polling stays single-flight and stops when leaving the pag
 
 test('Studio stops polling cancelled runs and cancels scheduled polling on navigation', async ({ page }) => {
   await mockWorkspace(page);
+  const sourceId = '00000000-0000-4000-8000-000000000101';
+  const candidateId = '00000000-0000-4000-8000-000000000102';
+  const source = { id: sourceId, title: 'Owned fixture', body: 'Original synthetic story.', canonicalUrl: 'https://example.org/owned-story', platform: 'MANUAL', externalPostId: 'owned-1', discoveredAt: now, rights: [], comments: [], channel: { id: channelId, name: 'Community stories', language: 'vi', minimumCandidateScore: 55 } };
+  await page.route(`**/api/v1/posts/${sourceId}/comment-selection?**`, (route) => route.fulfill({ json: { items: [], targetCount: 5, availableCount: 0, reactionsKnown: 0, selectionBasis: 'PARTIAL_OR_MISSING_REACTIONS' } }));
+  await page.route(`**/api/v1/posts/${sourceId}/comments?**`, (route) => route.fulfill({ json: { items: [] } }));
+  await page.route(`**/api/v1/studio/content/${sourceId}`, (route) => route.fulfill({ json: { items: [{ id: sourceId, post: source, candidate: { id: candidateId, score: 80, minimumScore: 55, status: 'APPROVED', reasoning: null }, run: null, video: null, lifecycle: { state: 'SELECTED', blockedReason: null, nextAction: 'Open Studio', simulated: false } }], nextCursor: null } }));
   await page.route('**/api/v1/candidates?**', (route) => route.fulfill({ json: { items: [{ id: 'candidate-1', score: 80, minimumScore: 55, status: 'APPROVED', modelVersion: null, reasoning: null, factors: null, eligibility: null, post: { id: 'post-1', title: 'Owned fixture', body: 'Original synthetic story.', canonicalUrl: 'https://example.org/owned-story', platform: 'MANUAL', externalPostId: 'post-1', discoveredAt: now, rights: [], comments: [] } }] } }));
   let status = 'CANCELLED';
   let requests = 0;
   let production = 0;
-  await page.route('**/api/v1/candidates/candidate-1/produce', (route) => route.fulfill({ json: { runId: `production-${++production}`, storyProjectId: 'story-1', status: 'QUEUED' } }));
+  await page.route('**/api/v1/candidates/*/produce', (route) => route.fulfill({ json: { runId: `production-${++production}`, storyProjectId: 'story-1', status: 'QUEUED' } }));
   await page.route('**/api/v1/stories/story-1', (route) => route.fulfill({ json: { id: 'story-1', channel: null, post: { id: 'post-1', platform: 'MANUAL', title: 'Owned fixture', body: 'Original synthetic story.', authorAlias: null, comments: [] }, versions: [] } }));
-  await page.route('**/api/v1/production-runs/production-*', (route) => {
+  await page.route('**/api/v1/production-runs/*', (route) => {
     requests++;
-    return route.fulfill({ json: { id: 'production-1', storyProjectId: 'story-1', status, currentStage: null, errorCode: null, stages: [], renderJob: null, videos: [] } });
+    return route.fulfill({ json: { id: 'production-1', sourcePostId: sourceId, storyProjectId: 'story-1', status, currentStage: null, errorCode: null, stages: [], renderJob: null, videos: [] } });
   });
-  await page.goto('/studio');
-  await page.getByRole('button', { name: 'Generate script, voice and video', exact: false }).click();
-  await expect(page.getByText('CANCELLED', { exact: true })).toBeVisible();
+  await page.goto('/studio?run=55555555-5555-4555-8555-555555555555');
+  await page.getByRole('button', { name: 'Tạo bản nháp kịch bản', exact: false }).click();
+  await expect(page.getByText('CANCELLED', { exact: true })).toHaveCount(1);
   await page.waitForLoadState('networkidle');
   const terminalRequests = requests;
   await page.waitForTimeout(3500);
   expect(requests).toBe(terminalRequests);
   status = 'RUNNING';
-  await page.getByRole('button', { name: 'Generate script, voice and video', exact: false }).click();
+  await page.getByRole('button', { name: 'Tạo bản nháp kịch bản', exact: false }).click();
   await expect(page.getByText('RUNNING', { exact: true })).toBeVisible();
   const activeRequests = requests;
-  await page.getByRole('link', { name: 'Workspace settings', exact: true }).click();
+  await page.getByRole('link', { name: '⚙ Settings', exact: true }).click();
   await expect(page).toHaveURL(/\/settings$/);
   await page.waitForTimeout(2000);
   expect(requests).toBe(activeRequests);

@@ -7,6 +7,7 @@ import { relayPendingOutbox } from './outbox.js';
 import { DiscoveryPipeline, type DiscoveryEnvelope } from './pipeline.js';
 import { scheduleDueSources } from './scheduler.js';
 import { recoverDiscoveryJobs } from './recovery.js';
+import { recoverLocalCaptures } from './local-capture.js';
 
 const config = readWorkerConfig();
 const db = new PrismaClient();
@@ -42,6 +43,7 @@ async function pollOutbox() {
   if (pollingOutbox) return;
   pollingOutbox = true;
   try {
+    await recoverLocalCaptures(db);
     const recovered = await recoverDiscoveryJobs(db, queue, config);
     if (recovered) log({ level: 'info', event: 'jobs_recovered', count: recovered });
     const relayed = await relayPendingOutbox(db, queue, config);

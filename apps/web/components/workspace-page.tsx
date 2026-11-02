@@ -208,7 +208,7 @@ function Library({ reviewMode = false }: { reviewMode?: boolean }) {
   </>;
 }
 
-function PostInspector({ post, reviewMode, onClose, onChanged }: { post: Post; reviewMode: boolean; onClose: () => void; onChanged: () => void }) {
+export function PostInspector({ post, reviewMode, onClose, onChanged }: { post: Post; reviewMode: boolean; onClose: () => void; onChanged: () => void }) {
   const { role } = useSession(); const right = post.rights[0]; const comments = useResource(`/posts/${post.id}/comments?limit=100`, commentsListSchema);
   const eligibility = useResource(`/posts/${post.id}/eligibility?platform=YOUTUBE`, eligibilitySchema);
   const [error, setError] = useState(''); const [busy, setBusy] = useState(false);

@@ -2,6 +2,10 @@
 
 Luồng tối thiểu: **link nguồn + nội dung bài/bình luận → duyệt quyền → chọn bài → giọng đọc local + phụ đề → render MP4 → xem và tải về**. Không cần API key hoặc tài khoản developer. Link chỉ lưu nguồn tham chiếu; ứng dụng chưa tự lấy bài/bình luận từ Facebook/Threads. Script sử dụng bộ dựng deterministic, không gọi LLM trả phí.
 
+Từ Milestone 1 (02/11/2026), mở **Studio → Nhập bài mới** để chạy luồng này trong giao diện chính; `/export` vẫn hoạt động. Với bài đã có trong **Discover**, mở chi tiết → duyệt quyền/chọn bài → tiếp tục Studio → tạo bản nháp kịch bản → sửa/lưu → **Tạo video MP4** → xem/duyệt/tải. Chọn nhiều bài chỉ mở hàng đợi biên tập, chưa tự render. Xem [báo cáo UX](product/MILESTONE_1_REPORT.md).
+
+Milestone 2 thêm **Soạn kịch bản để nghe thử trước** ngay ở luồng nhập local. Mở kịch bản → **Nghe thử giọng** để tạo câu mẫu ngắn đúng giọng/tốc độ đã chọn. VieNeu mới đo độ dài WAV thực, cân lời đọc bằng thay đổi tốc độ vừa phải rồi căn phụ đề theo audio. Nếu nội dung quá dài/ngắn để vừa mục tiêu, app báo cần sửa kịch bản hoặc đổi thời lượng; không cắt câu hay tự bịa thêm nội dung. Cài lại dependencies bằng `pnpm local:tts:setup`; xem [báo cáo Milestone 2](product/MILESTONE_2_REPORT.md). Khi model đang nhả bộ nhớ để render, lần nghe tiếp theo có thể chờ vài giây để nạp lại.
+
 ## Chạy trên máy hiện tại
 
 Môi trường đã được chuẩn bị trong lượt triển khai ngày 28/10/2026:
@@ -20,18 +24,18 @@ pnpm local:export
 
 Mở [http://127.0.0.1:3000/export](http://127.0.0.1:3000/export). Giữ cửa sổ lệnh hoạt động trong khi render. `Ctrl+C` dừng web/API/discovery/media worker được launcher khởi chạy, giữ nguyên dữ liệu PostgreSQL/Redis và video. Nếu ứng dụng đang chạy sẵn, dùng URL hiện tại thay vì mở launcher thứ hai.
 
-Launcher ép origin web `http://127.0.0.1:3000` và API `http://127.0.0.1:3001` cho các tiến trình con để cookie/Origin nhất quán, kể cả `.env` cũ dùng `localhost`. Nó chọn `SCRIPT_PROVIDER=mock`, `TTS_PROVIDER=local`, `PUBLISHER_PROVIDER=mock` và tắt live analytics. Nó không chạy automation worker, không gọi API provider trả phí và không đăng video. Launcher không tự cài packages, tạo database hay áp migration khi khởi động.
+Launcher ép origin web `http://127.0.0.1:3000` và API `http://127.0.0.1:3001` cho các tiến trình con để cookie/Origin nhất quán, kể cả `.env` cũ dùng `localhost`. Nó chọn `SCRIPT_PROVIDER=mock`, VieNeu nếu đã cài môi trường neural (nếu chưa có thì eSpeak), `PUBLISHER_PROVIDER=mock` và tắt live analytics. Có thể đặt `LOCAL_TTS_PROVIDER=local` để dùng eSpeak. Nó không chạy automation worker, không gọi API provider trả phí và không đăng video. Launcher không tự cài packages, tạo database hay áp migration khi khởi động. Thiết lập giọng mới: `pnpm local:tts:setup`; xem [hướng dẫn comment và TTS](product/LOCAL_COMMENTS_TTS_REPORT.md).
 
 ## Cách dùng lần đầu
 
 1. Chọn **Create account** tại màn hình đăng nhập, tạo tài khoản local bằng mật khẩu riêng. Không có mật khẩu demo chung.
 2. Nếu chưa có workspace, vào **Settings** để tạo; người tạo có role OWNER.
 3. Vào **Channels** tạo kênh ngôn ngữ `vi`. Với kênh biên tập thủ công, chủ động chọn ngưỡng phù hợp; có thể chọn `0` để tự duyệt mọi bài an toàn có quyền. Điểm thấp không bị tự động bỏ qua; đặt ngưỡng trước khi nhập.
-4. Mở **Xuất video** (`/export`). Dán link HTTPS Facebook/Threads, tiêu đề, nội dung bài và tối đa 8 bình luận, mỗi dòng một bình luận.
+4. Mở **Studio → Nhập bài mới** hoặc `/export`. Dán link HTTPS Facebook/Threads, tiêu đề, nội dung bài và cả khối/file bình luận. Hỗ trợ văn bản theo dòng, react + tab hoặc JSON; tối đa 500 bình luận đầu vào. Ứng dụng tự chọn 5–10 theo react đã lưu và thời lượng; khi thiếu react sẽ thông báo rõ.
 5. Chọn đúng cơ sở quyền, lãnh thổ, nền tảng và ghi công nếu cần. License/consent phải có evidence. Xác nhận bạn có thẩm quyền sử dụng cả bài và bình luận. Public link không tự cấp quyền tái sử dụng.
 6. Bấm **Lưu bài để kiểm tra**. Đọc bản đã lưu và các bình luận. Nếu trùng bài, hệ thống giữ bản cũ và quyền cũ, không ghi đè bằng dữ liệu vừa dán.
 7. Tích xác nhận đã đọc bản lưu, bấm **Duyệt quyền bản lưu**, rồi **Xác nhận chọn bài**. Các bước này cần OWNER/ADMIN/REVIEWER; tạo video cần OWNER/ADMIN/EDITOR. OWNER/ADMIN có thể làm toàn luồng.
-8. Chọn giọng eSpeak NG tiếng Việt và độ dài mục tiêu; bấm tạo video. Theo dõi stage/progress. Có thể reload cùng tab để tiếp tục theo dõi; chỉ IDs/fingerprint của thao tác được lưu trong sessionStorage theo user/workspace.
+8. Chọn giọng VieNeu tiếng Việt (hoặc eSpeak nếu đang dùng cấu hình cũ) và độ dài mục tiêu; bấm tạo video. Có thể mở **Giọng đọc riêng** để thêm WAV PCM16 3–15 giây có quyền sử dụng. Theo dõi stage/progress; reload cùng tab tiếp tục theo dõi. Chỉ IDs/fingerprint/cấu hình của thao tác được lưu trong sessionStorage theo user/workspace.
 9. Xem video, duyệt output sau khi xem rồi tải **MP4**. Video có nền template sẵn, không bắt buộc upload background. Có thể mở Studio để chỉnh script/template thêm.
 
 Giọng eSpeak NG là giọng tổng hợp offline, chất lượng cơ bản. Thời gian phụ đề ở mức approximate, chưa phải forced alignment. Độ dài là mục tiêu; độ dài thực dựa trên phần lời đọc. Đường tải media vẫn kiểm tra session, workspace và quyền nguồn hiện hành.
@@ -131,3 +135,16 @@ Thay đổi chính:
 Artifacts kiểm chứng nằm trong `test-results/` (ignored): `local-export-smoke.mp4`, `local-export-smoke.json`, `local-export-browser.mp4`, `local-export-browser.json`. Hai MP4 đã được đối chiếu lại từ immutable object store sau lượt test Phase6; metadata vẫn khớp kích thước/độ dài V01. Ảnh history/cancel và mobile hiện tại ở `test-results/local-export-browser/`, được chụp từ suite UI mock Phase6. Fixture accounts/workspaces tổng hợp được giữ trong DB local mới để kiểm tra; không dùng dữ liệu Facebook/Threads thật hoặc publish. Browser tests mock không được dùng thay cho kết quả full flow thật nêu riêng ở trên.
 
 Các lệnh verification thực tế dùng binary Node trực tiếp để tránh bootstrap package manager ngoài dự kiến; tương đương `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:integration`, `pnpm build`. Chạy suite UI với `pnpm --filter @shorts-factory/web exec playwright test --config playwright-local-export.config.ts`; đặt `LOCAL_EXPORT_UI_BASE_URL=http://127.0.0.1:3000` khi dùng app đang chạy. Không chạy Next dev/build đồng thời trên cùng `.next`.
+# Ảnh post/comment thật qua trình duyệt local
+
+Chạy `pnpm local:capture:setup`, rồi `pnpm local:export`. Setup dùng checkout `ai-comment` nằm cạnh dự án, hoặc đường dẫn `LOCAL_CAPTURE_ENGINE_PATH`; engine không được đóng gói trong repo này. Python/Chromium nằm riêng trong `.data/source-capture/`, không chung môi trường TTS.
+
+Trong Studio → nhập bài: chọn kênh, dán link Facebook/Threads, bấm **Mở trình duyệt đăng nhập**. Đăng nhập và mở đúng bài trong cửa sổ riêng; tải thêm bình luận/“Xem thêm” nếu cần, rồi quay lại bấm **Đã đăng nhập · Chụp bài và bình luận**. Xem ảnh gốc/bản che tên, khai báo quyền của bài và bình luận, duyệt và tạo MP4. Không cần gõ từng bình luận.
+
+Profile đăng nhập tách theo workspace và người dùng. Job chụp lưu trong PostgreSQL, enqueue qua outbox, có hủy, timeout, fencing và phục hồi lease. Có thể tải lại trang. Ảnh nguồn được lưu trong object store của workspace; lấy ảnh và render đều kiểm tra quyền truy cập phía server. Takedown thu hồi ảnh cùng video/audio.
+
+Chỉ lấy được nội dung tài khoản của bạn thực sự xem được. Top react là top trong phần engine đã tải được, không bảo đảm mọi bình luận của bài/group. CAPTCHA, yêu cầu đăng nhập lại, nội dung không được cấp quyền xem hoặc thiếu ảnh đều cần người dùng xử lý; không vượt qua chúng. Chụp không tự cấp quyền sử dụng nội dung. Adapter bị tắt trong production.
+
+Ẩn tác giả chỉ che vùng tên/avatar đã nhận diện; không bảo đảm xóa tên trong nội dung hoặc ảnh đính kèm. Nếu không có bản ảnh đã che đúng nguồn, chế độ che tác giả sẽ bị chặn. Có thể xem ảnh và chủ động chọn nguyên bản khi phù hợp. Video dùng ảnh nguồn, không tự dựng giao diện Facebook/Threads khi ảnh thiếu.
+
+Xem [đánh giá nguồn tham khảo](research/VIDEO_READER_REFERENCES.md) và [báo cáo kiểm thử](product/SOURCE_CAPTURE_REPORT.md).

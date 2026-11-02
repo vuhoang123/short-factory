@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { storyScriptSchema, type StoryScript, type StorySegment } from './contracts.js';
+import { sentenceExcerpt } from './narration.js';
 
 export interface ScriptComment { id: string; body: string; authorAlias?: string | null }
 export interface ScriptSource { id: string; platform: 'MANUAL' | 'REDDIT' | 'THREADS' | 'FACEBOOK'; title?: string | null; body: string; comments: ScriptComment[] }
@@ -8,6 +9,7 @@ export interface GenerateScriptInput {
   language: string;
   targetDurationSec: number;
   style: 'STORYTELLING' | 'SOCIAL_COMMENTARY';
+  narrationWordsPerSecond?: number;
 }
 export interface ScriptGenerationResult { script: StoryScript; provider: string; modelVersion: string; usageUnits?: number }
 export interface ScriptProvider { readonly id: string; generate(input: GenerateScriptInput): Promise<ScriptGenerationResult> }
@@ -18,44 +20,37 @@ export function estimateNarrationDurationMs(text: string, wordsPerMinute = 150):
   return Math.max(700, Math.round((words(text).length / wordsPerMinute) * 60_000));
 }
 
-function truncateWords(text: string, limit: number): string {
-  const list = words(text);
-  if (list.length <= limit) return text.trim();
-  const headCount = Math.max(1, Math.floor(limit * 0.75));
-  const tailCount = Math.max(1, limit - headCount);
-  return `${list.slice(0, headCount).join(' ')} … ${list.slice(-tailCount).join(' ')}`;
-}
-function verbatimExcerpt(text: string, maxWords: number): string {
-  const matches = [...text.matchAll(/\S+/gu)];
-  const wordsAllowed = Math.max(1, maxWords);
-  const end = matches.length <= wordsAllowed ? text.length : (matches[wordsAllowed - 1]?.index ?? 0) + (matches[wordsAllowed - 1]?.[0].length ?? 0);
-  return Array.from(text.slice(0, Math.min(end, 3600))).join('');
-}
-
 function makeSegment(segment: StorySegment): StorySegment {
   return { ...segment, estimatedDurationMs: segment.estimatedDurationMs ?? estimateNarrationDurationMs(segment.text) };
 }
 
 export class DeterministicMockScriptProvider implements ScriptProvider {
-  readonly id = 'deterministic-mock-v1';
+  readonly id = 'deterministic-mock-sentences-v2';
 
   async generate(input: GenerateScriptInput): Promise<ScriptGenerationResult> {
-    const postText = input.source.title?.trim() || truncateWords(input.source.body, 12);
-    const commentWordBudget = input.source.comments.length ? Math.max(2, Math.floor((input.targetDurationSec * 2.2 - 28) / (input.source.comments.length * 2))) : 0;
-    const summaryWordBudget = Math.max(8, Math.floor(input.targetDurationSec * 2.2 - 30 - input.source.comments.length * (commentWordBudget + 4)));
-    const postSummary = truncateWords(input.source.body, summaryWordBudget);
     const isVietnamese = input.language.toLowerCase().startsWith('vi');
+    const postText = input.source.title?.trim() || (isVietnamese ? 'Cùng xem câu chuyện này.' : 'Here is the story.');
+    const outro = isVietnamese ? 'Bạn nghĩ gì về câu chuyện này?' : 'What do you make of this story?';
+    const budget = Math.max(20, Math.floor((input.targetDurationSec - (input.source.comments.length + 4) * 0.1) * (input.narrationWordsPerSecond ?? 2.5)) - words(postText).length - words(outro).length);
+    const commentBudget = input.source.comments.length ? Math.max(8, Math.floor(budget * 0.55 / input.source.comments.length)) : 0;
+    const comments = input.source.comments.map((comment) => ({ ...comment, excerpt: sentenceExcerpt(comment.body, commentBudget) }));
+    const summaryWordBudget = Math.max(8, budget - comments.reduce((total, comment) => total + words(comment.excerpt).length, 0));
+    const postSummary = sentenceExcerpt(input.source.body, summaryWordBudget);
     const segments: StorySegment[] = [
-      makeSegment({ id: 'hook', type: 'HOOK', text: postText, sourceRefs: [`post:${input.source.id}`], narrationType: postText === input.source.title || postText === input.source.body ? 'VERBATIM' : 'PARAPHRASE' }),
-      makeSegment({ id: 'intro', type: 'INTRO', text: isVietnamese ? 'Đây là câu chuyện gốc cùng những bình luận được chọn.' : 'Here is the source story, followed by selected comments.', sourceRefs: [], narrationType: 'ORIGINAL_COMMENTARY' }),
-      makeSegment({ id: 'post', type: 'POST', text: postSummary, sourceRefs: [`post:${input.source.id}`], narrationType: postSummary === input.source.body ? 'VERBATIM' : 'PARAPHRASE' }),
+      makeSegment({ id: 'hook', type: 'HOOK', text: postText, sourceRefs: postText === input.source.title ? [`post:${input.source.id}`] : [], narrationType: postText === input.source.title ? 'VERBATIM' : 'ORIGINAL_COMMENTARY' }),
     ];
-    for (const [index, comment] of input.source.comments.entries()) {
-      segments.push(makeSegment({ id: `transition-${index + 1}`, type: 'TRANSITION', text: isVietnamese ? 'Một bình luận được chọn:' : 'One selected comment:', sourceRefs: [`comment:${comment.id}`], narrationType: 'ORIGINAL_COMMENTARY' }));
-      segments.push(makeSegment({ id: `comment-${index + 1}`, type: 'COMMENT', text: verbatimExcerpt(comment.body, commentWordBudget), sourceRefs: [`comment:${comment.id}`], narrationType: 'VERBATIM' }));
+    const postChunks: string[] = [];
+    for (const part of new Intl.Segmenter(input.language, { granularity: 'sentence' }).segment(postSummary)) {
+      const previous = postChunks.at(-1);
+      if (previous && words(`${previous} ${part.segment}`).length <= 30) postChunks[postChunks.length - 1] = `${previous} ${part.segment.trim()}`;
+      else postChunks.push(part.segment.trim());
     }
-    segments.push(makeSegment({ id: 'outro', type: 'OUTRO', text: isVietnamese ? (input.style === 'SOCIAL_COMMENTARY' ? 'Bạn muốn bổ sung điều gì vào câu chuyện này?' : 'Bạn nghĩ gì về câu chuyện này?') : input.style === 'SOCIAL_COMMENTARY' ? 'What would you add to this conversation?' : 'What do you make of this story?', sourceRefs: [], narrationType: 'ORIGINAL_COMMENTARY' }));
-    const script = storyScriptSchema.parse({ version: 1, language: input.language, title: input.source.title?.trim() || postText, targetDurationSec: input.targetDurationSec, segments });
+    for (const [index, text] of postChunks.entries()) {
+      segments.push(makeSegment({ id: index ? `post-${index + 1}` : 'post', type: 'POST', text, sourceRefs: [`post:${input.source.id}`], narrationType: text === input.source.body ? 'VERBATIM' : 'PARAPHRASE' }));
+    }
+    for (const [index, comment] of comments.entries()) segments.push(makeSegment({ id: `comment-${index + 1}`, type: 'COMMENT', text: comment.excerpt, sourceRefs: [`comment:${comment.id}`], narrationType: 'VERBATIM' }));
+    segments.push(makeSegment({ id: 'outro', type: 'OUTRO', text: outro, sourceRefs: [], narrationType: 'ORIGINAL_COMMENTARY' }));
+    const script = storyScriptSchema.parse({ version: 1, language: input.language, title: input.source.title?.trim() || postText, targetDurationSec: input.targetDurationSec, segments: segments.map((segment) => ({ ...segment, estimatedDurationMs: estimateNarrationDurationMs(segment.text, (input.narrationWordsPerSecond ?? 2.5) * 60) })) });
     assertGroundedScript(script, input.source);
     return { script, provider: this.id, modelVersion: this.id };
   }

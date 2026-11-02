@@ -28,6 +28,8 @@ export async function mockWorkspace(page: Page) {
     }
     const run = { id: 'run-1', entityId: channelId, status: 'AWAITING_APPROVAL', currentStep: 'APPROVAL_GATE', createdAt: now, updatedAt: now, input: { version: ruleVersion }, output: { quality: { status: 'NEEDS_REVIEW', score: 90 } } };
     const data: Record<string, unknown> = {
+      '/studio/overview': { counts: { discovered: 0, selected: 0, scripting: 0, rendering: 0, review: 0, approved: 0, failed: 0, scheduled: 0, published: 0 }, recent: [], publishing: 'BLOCKED_EXTERNAL' },
+      '/studio/content': { items: [], nextCursor: null },
       '/auth/me': { user: { id: 'owner-1', email: 'fixture@example.org', name: 'Fixture owner' }, workspaces: [{ id: 'workspace-1', name: 'UI contract fixture', role: 'OWNER' }], activeWorkspaceId: 'workspace-1' },
       '/channels': { items: [{ id: channelId, name: 'Community stories', language: 'vi' }] },
       '/topic-rules': { items: [{ id: 'topic-rule-1', workspaceId: 'workspace-1', channelId, name: 'Giật kinh hồn', keywords: ['giật kinh hồn'], hashtags: [], topics: ['bất ngờ'], language: 'vi', allow: [], deny: [], minimumScore: 55, enabled: true }] },

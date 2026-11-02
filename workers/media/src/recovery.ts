@@ -58,7 +58,11 @@ export async function recoverMediaJobs(db: PrismaClient, queue: Queue<MediaEnvel
       await tx.renderJob.updateMany({ where: { workspaceId: event.workspaceId, productionRunId: run.id }, data: { status: 'QUEUED', completedAt: null, errorCode: null } });
       const changed = await tx.outboxEvent.updateMany({ where: { id: event.id, workspaceId: event.workspaceId, publishedAt: event.publishedAt }, data: { publishedAt: null, payload: { ...payload, recoveryAttempts: payload.recoveryAttempts + 1 } as Prisma.InputJsonObject } });
       return changed.count;
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 10_000 });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 10_000 }).catch((error: unknown) => {
+      // A competing sweeper can invalidate this snapshot; the next sweep rechecks durable state.
+      if (error instanceof Prisma.PrismaClientKnownRequestError && (error.code === 'P2034' || (error.code === 'P2010' && error.meta?.code === '40001'))) return 0;
+      throw error;
+    });
   }
   return recovered;
 }

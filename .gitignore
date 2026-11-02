@@ -12,4 +12,6 @@ playwright-report/
 .env.*
 !.env.example
 *.tsbuildinfo
+__pycache__/
+.venv/
 *.log

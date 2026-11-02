@@ -10,6 +10,7 @@
     "build": "tsc --noEmit"
   },
   "dependencies": {
+    "@shorts-factory/media": "workspace:*",
     "@shorts-factory/database": "workspace:*",
     "@shorts-factory/shared": "workspace:*",
     "@shorts-factory/sources": "workspace:*",

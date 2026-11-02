@@ -1,11 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import type { Server } from 'node:http';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import supertest from 'supertest';
 import type { INestApplication } from '@nestjs/common';
 import { PrismaClient } from '@shorts-factory/database';
 import { createApp } from '../src/app.js';
 import fixture from '../../../examples/manual-import.json';
+import { MediaProductionPipeline } from '../../../workers/media/src/pipeline.js';
+import { readMediaWorkerConfig } from '../../../workers/media/src/config.js';
+import { studioItemsSchema, studioOverviewSchema } from '../../web/lib/studio.js';
+import { MockTtsProvider } from '@shorts-factory/media';
 
 const testUrl = process.env.TEST_DATABASE_URL;
 if (testUrl && !new URL(testUrl).pathname.endsWith('_test')) throw new Error('Integration tests require a dedicated database ending in _test.');
@@ -302,6 +306,85 @@ integration('Phase 2 PostgreSQL discovery and rights vertical slice', () => {
     expect((await ownerA.get(`${prefix}/production-runs/${first.body.runId}`)).body.status).toBe('QUEUED');
   });
 
+  it('opens an exact Discover item, drafts without media, and queues first render transactionally', async () => {
+    const imported = await post(editor, '/imports/manual', { ...fixture, externalPostId: `${namespace}-studio-draft`, canonicalUrl: `https://example.org/studio-${namespace}`, title: 'Owned Studio draft', body: 'An owned community story about readers sharing books in a quiet garden. Everyone contributed their favorite story to the neighborhood library.' });
+    expect(imported.status).toBe(201);
+    const id = imported.body.postId as string;
+    const rightsReview = await post(reviewer, `/posts/${id}/rights/review`, { decision: 'APPROVED', territory: 'WORLDWIDE' });
+    expect(rightsReview.status, JSON.stringify(rightsReview.body)).toBe(201);
+    const candidate = await db.contentCandidate.upsert({ where: { workspaceId_sourcePostId: { workspaceId: workspaceA, sourcePostId: id } }, create: { workspaceId: workspaceA, sourcePostId: id, score: 80, minimumScore: 55, status: 'APPROVED' }, update: { score: 80, status: 'APPROVED' } });
+    const channel = await post(ownerA, '/channels', { name: 'Studio draft channel', language: 'vi' });
+    const profiles = await ownerA.get(`${prefix}/voice-profiles`);
+    const profile = (profiles.body.items as Array<{ id: string; language: string }>).find((entry) => ['vi', 'multilingual'].includes(entry.language));
+    expect(profile).toBeTruthy();
+    const commentIds = (await db.sourceComment.findMany({ where: { workspaceId: workspaceA, sourcePostId: id }, take: 3 })).map((comment) => comment.id);
+    const body = { channelId: channel.body.id as string, voiceProfileId: profile!.id, commentIds, draftOnly: true, targetDurationSec: 25 };
+    const key = randomUUID();
+    const draft = await post(editor, `/candidates/${candidate.id}/produce`, body, key);
+    expect(draft.status, JSON.stringify(draft.body)).toBe(201);
+    expect((await post(editor, `/candidates/${candidate.id}/produce`, body, key)).body).toEqual(draft.body);
+    expect((await db.productionRun.findUniqueOrThrow({ where: { id: draft.body.runId as string } })).input).toMatchObject({ mode: 'SCRIPT_ONLY' });
+    const event = await db.outboxEvent.findFirstOrThrow({ where: { workspaceId: workspaceA, aggregateId: draft.body.runId as string, eventType: 'PRODUCTION_RUN_REQUESTED' } });
+    const pipeline = new MediaProductionPipeline(db, readMediaWorkerConfig({ DATABASE_URL: testUrl!, REDIS_URL: 'redis://localhost', SCRIPT_PROVIDER: 'mock', TTS_PROVIDER: 'mock' }));
+    const envelope = { jobId: event.id, workspaceId: workspaceA, entityId: draft.body.runId, step: 'PRODUCTION_RUN_REQUESTED', version: 1, idempotencyKey: key, traceId: randomUUID(), attempt: 0, scheduledAt: new Date().toISOString() };
+    await pipeline.process(envelope);
+    await pipeline.process(envelope);
+    const completed = await db.productionRun.findUniqueOrThrow({ where: { id: draft.body.runId as string } });
+    expect(completed.status).toBe('SUCCEEDED');
+    expect(completed.currentStage).toBe('SCRIPT_READY');
+    expect(await db.storyVersion.count({ where: { workspaceId: workspaceA, storyProjectId: draft.body.storyProjectId as string } })).toBe(1);
+    expect(await db.video.count({ where: { workspaceId: workspaceA, storyProjectId: draft.body.storyProjectId as string } })).toBe(0);
+    expect(await db.audioAsset.count({ where: { workspaceId: workspaceA, storyVersion: { storyProjectId: draft.body.storyProjectId as string } } })).toBe(0);
+    const detail = await viewer.get(`${prefix}/studio/content/${id}`);
+    expect(detail.status).toBe(200);
+    expect(studioItemsSchema.parse(detail.body).items[0]).toMatchObject({ id, lifecycle: { state: 'SCRIPTING' }, run: { id: draft.body.runId } });
+    expect(detail.body.items[0].post).not.toHaveProperty('rawPayload');
+    expect((await ownerB.get(`${prefix}/studio/content/${id}`)).status).toBe(404);
+    expect((await ownerB.get(`${prefix}/studio/content?cursor=${id}`)).status).toBe(404);
+    expect((await ownerA.get(`${prefix}/studio/content?workspaceId=${workspaceB}`)).status).toBe(400);
+    const overview = await viewer.get(`${prefix}/studio/overview`);
+    expect(studioOverviewSchema.safeParse(overview.body).success).toBe(true);
+    const matching = await viewer.get(`${prefix}/studio/content?q=Owned%20Studio&minScore=70&platform=MANUAL`);
+    expect(matching.body.items.map((item: { id: string }) => item.id)).toEqual([id]);
+    expect((await viewer.get(`${prefix}/studio/content?minScore=99`)).body.items.map((item: { id: string }) => item.id)).not.toContain(id);
+    await db.postMetricSnapshot.create({ data: { workspaceId: workspaceA, sourcePostId: id, likes: 21, replies: 3 } });
+    expect((await viewer.get(`${prefix}/studio/content?q=Owned%20Studio&minLikes=20`)).body.items.map((item: { id: string }) => item.id)).toEqual([id]);
+    expect((await viewer.get(`${prefix}/studio/content?q=Owned%20Studio&minLikes=99`)).body.items).toEqual([]);
+    expect((await viewer.get(`${prefix}/studio/content?q=Owned%20Studio&from=2100-01-01T00:00:00Z`)).body.items).toEqual([]);
+    expect((await ownerB.get(`${prefix}/studio/content?q=Owned%20Studio`)).body.items).toEqual([]);
+    expect((await supertest(server).get(`${prefix}/studio/overview`)).status).toBe(401);
+    const previewKey = randomUUID();
+    const previewSettings = { voiceProfileId: profile!.id, speakingRate: 1.15, preview: true };
+    const preview = await post(editor, `/stories/${draft.body.storyProjectId}/audio`, previewSettings, previewKey);
+    expect(preview.status).toBe(201);
+    expect((await post(editor, `/stories/${draft.body.storyProjectId}/audio`, previewSettings, previewKey)).body).toEqual(preview.body);
+    expect((await db.productionRun.findUniqueOrThrow({ where: { id: preview.body.runId as string } })).input).toMatchObject({ mode: 'AUDIO_ONLY', preview: true, speakingRate: 1.15, selectedSegmentIds: [] });
+    expect((await post(ownerB, `/stories/${draft.body.storyProjectId}/audio`, previewSettings)).status).toBe(404);
+    expect((await post(viewer, `/stories/${draft.body.storyProjectId}/audio`, previewSettings)).status).toBe(403);
+    const previewEvent = await db.outboxEvent.findFirstOrThrow({ where: { workspaceId: workspaceA, aggregateId: preview.body.runId as string, eventType: 'PRODUCTION_RUN_REQUESTED' } });
+    await pipeline.process({ ...envelope, jobId: previewEvent.id, entityId: preview.body.runId, idempotencyKey: previewKey });
+    const previewAudio = await db.audioAsset.findMany({ where: { workspaceId: workspaceA, storyVersion: { storyProjectId: draft.body.storyProjectId as string } } });
+    expect(previewAudio).toHaveLength(1);
+    expect(previewAudio[0]).toMatchObject({ segmentId: 'voice-preview' });
+    expect(previewAudio[0]!.durationMs).toBeLessThan(15000);
+    const renderKey = randomUUID();
+    expect((await post(editor, `/stories/${draft.body.storyProjectId}/render`, { voiceProfileId: 'unavailable' })).status).toBe(400);
+    const renderSettings = { theme: 'light', voiceProfileId: profile!.id, speakingRate: 1.15 };
+    const render = await post(editor, `/stories/${draft.body.storyProjectId}/render`, renderSettings, renderKey);
+    expect(render.status, JSON.stringify(render.body)).toBe(201);
+    expect((await post(editor, `/stories/${draft.body.storyProjectId}/render`, renderSettings, renderKey)).body).toEqual(render.body);
+    expect((await db.productionRun.findUniqueOrThrow({ where: { id: render.body.runId as string } })).input).toMatchObject({ mode: 'RENDER', theme: 'light', speakingRate: 1.15, voiceProfileId: profile!.id, storyVersionId: expect.any(String) });
+    expect((await db.productionRun.findUniqueOrThrow({ where: { id: render.body.runId as string } })).input).not.toHaveProperty('preview');
+    expect(await db.outboxEvent.count({ where: { workspaceId: workspaceA, aggregateId: render.body.runId as string } })).toBe(1);
+    expect((await post(ownerB, `/stories/${draft.body.storyProjectId}/render`, {})).status).toBe(404);
+    expect((await post(viewer, `/stories/${draft.body.storyProjectId}/render`, {})).status).toBe(403);
+    await db.contentRight.updateMany({ where: { workspaceId: workspaceA, sourcePostId: id }, data: { revokedAt: new Date() } });
+    const revoked = await post(editor, `/stories/${draft.body.storyProjectId}/render`, {});
+    expect(revoked.status).toBe(409);
+    expect(revoked.body.code).toBe('BLOCKED_RIGHTS');
+    expect((await viewer.get(`${prefix}/studio/content/${id}`)).body.items[0].lifecycle.blockedReason).toContain('quyền');
+  });
+
   it('lists paginated production history without exposing other workspaces', async () => {
     const story = await db.storyProject.findFirstOrThrow({ where: { workspaceId: workspaceA, sourcePostId: postId } });
     const run = await db.productionRun.findFirstOrThrow({ where: { workspaceId: workspaceA, storyProjectId: story.id } });
@@ -324,7 +407,7 @@ integration('Phase 2 PostgreSQL discovery and rights vertical slice', () => {
   });
 
   it('cancels queued and running renders idempotently with tenant and role enforcement', async () => {
-    const base = await db.productionRun.findFirstOrThrow({ where: { workspaceId: workspaceA, status: 'QUEUED' } });
+    const base = await db.productionRun.findFirstOrThrow({ where: { workspaceId: workspaceA, status: 'QUEUED', story: { sourcePostId: postId } } });
     const runId = base.id;
     expect((await post(ownerB, `/production-runs/${runId}/cancel`, {})).status).toBe(404);
     expect((await post(viewer, `/production-runs/${runId}/cancel`, {})).status).toBe(403);
@@ -466,6 +549,54 @@ integration('Phase 2 PostgreSQL discovery and rights vertical slice', () => {
     expect(members.status).toBe(200);
     expect(members.body.items).toContainEqual(expect.objectContaining({ email: `${namespace}-editor@example.org`, role: 'EDITOR' }));
     expect((await viewer.get(`${prefix}${membershipPath}`)).status).toBe(403);
+  });
+
+  it('ranks only the active workspace stored comments and scales automatic selection to duration', async () => {
+    const imported = await post(editor, '/imports/manual', { ...fixture, canonicalUrl: `https://example.org/top-comments-${namespace}`, externalPostId: `${namespace}-top-comments`, body: 'Owned synthetic source for stored reaction ranking.', comments: Array.from({ length: 12 }, (_, index) => ({ externalId: `top-${index}`, body: `Original comment number ${index}`, likes: index * 10 })) });
+    expect(imported.status).toBe(201);
+    const id = imported.body.postId as string;
+    const short = await ownerA.get(`${prefix}/posts/${id}/comment-selection?duration=40`);
+    expect(short.status).toBe(200);
+    expect(short.body.items).toHaveLength(5);
+    expect(short.body.items[0].likes).toBe(110);
+    expect(short.body.selectionBasis).toBe('REACTIONS');
+    expect((await ownerA.get(`${prefix}/posts/${id}/comment-selection?duration=120`)).body.items).toHaveLength(10);
+    expect((await ownerB.get(`${prefix}/posts/${id}/comment-selection?duration=40`)).status).toBe(404);
+    expect((await ownerA.get(`${prefix}/posts/${id}/comment-selection?duration=999`)).status).toBe(400);
+    expect((await post(reviewer, `/posts/${id}/rights/review`, { decision: 'APPROVED', territory: 'WORLDWIDE' })).status).toBe(201);
+    const candidate = await db.contentCandidate.upsert({ where: { workspaceId_sourcePostId: { workspaceId: workspaceA, sourcePostId: id } }, create: { workspaceId: workspaceA, sourcePostId: id, score: 80, status: 'APPROVED' }, update: { score: 80, status: 'APPROVED' } });
+    const channel = await db.contentChannel.findFirstOrThrow({ where: { workspaceId: workspaceA } });
+    const profile = ((await ownerA.get(`${prefix}/voice-profiles`)).body.items as Array<{ id: string; language: string }>).find((voice) => ['vi', 'multilingual'].includes(voice.language));
+    const produced = await post(editor, `/candidates/${candidate.id}/produce`, { channelId: channel.id, voiceProfileId: profile!.id, commentSelection: 'TOP_REACTIONS', targetDurationSec: 120, draftOnly: true });
+    expect(produced.status, JSON.stringify(produced.body)).toBe(201);
+    const run = await db.productionRun.findUniqueOrThrow({ where: { id: produced.body.runId as string } });
+    expect(run.input).toMatchObject({ commentIds: expect.arrayContaining(short.body.items.map((comment: { id: string }) => comment.id)) });
+    expect((run.input as { commentIds: string[] }).commentIds).toHaveLength(10);
+  });
+
+  it('stores speaker-attested custom voices privately and denies cross-workspace voice use', async () => {
+    vi.stubEnv('TTS_PROVIDER', 'vieneu');
+    try {
+      const audio = (await new MockTtsProvider().synthesize({ text: 'Synthetic reference tone owned exclusively by this test fixture.', language: 'vi', voiceId: 'test', speakingRate: 1 })).audio;
+      const upload = (agent: Agent, consent: string, bytes = audio, key = randomUUID()) => agent.post(`${prefix}/voice-profiles`).set('Origin', origin).set('Idempotency-Key', key).set('Content-Type', 'audio/wav').set('X-Voice-Name', encodeURIComponent('Giọng riêng kiểm thử')).set('X-Voice-Consent', consent).send(bytes);
+      expect((await upload(viewer, 'true')).status).toBe(403);
+      expect((await upload(editor, 'false')).status).toBe(400);
+      expect((await upload(editor, 'true', Buffer.from('not audio'))).status).toBe(400);
+      const key = randomUUID();
+      const created = await upload(editor, 'true', audio, key);
+      expect(created.status, JSON.stringify(created.body)).toBe(201);
+      expect((await upload(editor, 'true', audio, key)).body).toEqual(created.body);
+      const profileId = created.body.id as string;
+      expect((await ownerA.get(`${prefix}/voice-profiles`)).body.items.some((voice: { id: string }) => voice.id === profileId)).toBe(true);
+      expect((await ownerB.get(`${prefix}/voice-profiles`)).body.items.some((voice: { id: string }) => voice.id === profileId)).toBe(false);
+      const foreign = await post(ownerB, `/candidates/${randomUUID()}/produce`, { channelId: channelB, voiceProfileId: profileId });
+      expect(foreign.status).toBe(400);
+      expect(foreign.body.code).toBe('VOICE_PROFILE_INVALID');
+      const assetId = profileId.slice('vieneu:custom:'.length);
+      expect((await ownerA.get(`${prefix}/media/${assetId}`)).status).toBe(404);
+      expect((await ownerB.get(`${prefix}/media/${assetId}`)).status).toBe(404);
+      expect(await db.mediaAsset.count({ where: { workspaceId: workspaceA, kind: 'VOICE_REFERENCE' } })).toBe(1);
+    } finally { vi.unstubAllEnvs(); }
   });
 
   it('permits a reviewer to resolve unknown rights for a Facebook-only licensed scope', async () => {

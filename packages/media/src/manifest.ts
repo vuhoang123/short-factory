@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
 import { renderManifestSchema, type RenderManifest, type StoryScript, type SubtitlePreset } from './contracts.js';
 import { generateSubtitleTrack, type TimedSegment } from './subtitles.js';
+import type { WordTiming } from './alignment.js';
 
-export interface ManifestAudioAsset { assetId: string; segmentId: string; durationMs: number }
+export interface ManifestAudioAsset { assetId: string; segmentId: string; durationMs: number; providerTimings?: WordTiming[] }
 export interface CreateManifestInput {
   storyProjectId: string;
   storyVersionId: string;
@@ -16,6 +17,7 @@ export interface CreateManifestInput {
   visualSettings?: { theme: 'dark' | 'light'; anonymizeAuthors: boolean; showEngagement: boolean };
   audioAssets: ManifestAudioAsset[];
   subtitlePreset: SubtitlePreset;
+  sourceImages?: RenderManifest['sourceImages'];
 }
 export interface CreatedManifest { manifest: RenderManifest; checksum: string; subtitle: ReturnType<typeof generateSubtitleTrack> }
 
@@ -33,7 +35,7 @@ export function createRenderManifest(input: CreateManifestInput): CreatedManifes
     const startFrame = Math.floor((startMs / 1000) * 30);
     const durationFrames = Math.max(1, Math.ceil((audio.durationMs / 1000) * 30));
     const endFrame = startFrame + durationFrames;
-    timedSegments.push({ segment, startMs, endMs });
+    timedSegments.push({ segment, startMs, endMs, ...(audio.providerTimings ? { providerTimings: audio.providerTimings.map((word) => ({ ...word, startMs: word.startMs + startMs, endMs: word.endMs + startMs })) } : {}) });
     visualSegments.push({ id: segment.id, type: segment.type, text: segment.text, sourceRefs: segment.sourceRefs, narrationType: segment.narrationType, startFrame, endFrame });
     audioTimeline.push({ assetId: audio.assetId, segmentId: segment.id, startFrame, durationFrames });
     cursorMs = endMs + 100;
@@ -41,6 +43,7 @@ export function createRenderManifest(input: CreateManifestInput): CreatedManifes
   const subtitle = generateSubtitleTrack(timedSegments, input.subtitlePreset);
   const durationFrames = Math.max(1, Math.ceil((Math.max(1, cursorMs - 100) / 1000) * 30));
   const manifest = renderManifestSchema.parse({
+    ...(input.sourceImages ? { sourceImages: input.sourceImages } : {}),
     version: 1,
     templateId: input.templateId,
     templateVersion: 1,

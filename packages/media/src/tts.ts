@@ -4,13 +4,14 @@ import { spawn } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
+import { readFileSync } from 'node:fs';
 
 export const voiceProfileSchema = z.object({
-  id: z.string(), name: z.string(), provider: z.enum(['local', 'openai', 'mock']), language: z.string(), voiceId: z.string(), requiresCredentials: z.boolean(),
+  id: z.string(), name: z.string(), provider: z.enum(['local', 'vieneu', 'openai', 'mock']), language: z.string(), voiceId: z.string(), requiresCredentials: z.boolean(),
 }).strict();
 export type VoiceProfile = z.infer<typeof voiceProfileSchema>;
 
-export interface TtsInput { text: string; language: string; voiceId: string; speakingRate: number }
+export interface TtsInput { text: string; language: string; voiceId: string; speakingRate: number; referenceAudio?: Buffer }
 export interface TtsResult { audio: Buffer; mimeType: 'audio/wav'; durationMs: number; provider: string; voiceId: string; usageUnits: number; estimatedCostUsd: number | null; timingPrecision: 'PROVIDER' | 'APPROXIMATE' }
 export interface TtsProvider { readonly id: string; synthesize(input: TtsInput): Promise<TtsResult> }
 
@@ -20,8 +21,9 @@ function waveDurationMs(audio: Uint8Array): number {
   let bytesPerSecond = 0;
   for (let offset = 12; offset + 8 <= data.length;) {
     const size = data.readUInt32LE(offset + 4);
-    if (data.toString('ascii', offset, offset + 4) === 'fmt ' && size >= 16) bytesPerSecond = data.readUInt32LE(offset + 12);
-    if (data.toString('ascii', offset, offset + 4) === 'data' && bytesPerSecond > 0) return Math.round((size / bytesPerSecond) * 1000);
+    if (size > data.length - offset - 8) throw new Error('TTS_INVALID_WAV');
+    if (data.toString('ascii', offset, offset + 4) === 'fmt ' && size >= 16) bytesPerSecond = data.readUInt32LE(offset + 16);
+    if (data.toString('ascii', offset, offset + 4) === 'data' && bytesPerSecond > 0 && size > 0) return Math.round((size / bytesPerSecond) * 1000);
     offset += 8 + size + (size % 2);
   }
   throw new Error('TTS_INVALID_WAV');
@@ -37,7 +39,7 @@ function wavHeader(payloadLength: number, sampleRate: number): Buffer {
 }
 
 export class MockTtsProvider implements TtsProvider {
-  readonly id = 'mock-tone-v1';
+  readonly id = 'mock-tone-wave-v2';
   async synthesize(input: TtsInput): Promise<TtsResult> {
     const durationMs = Math.max(1000, Math.round((input.text.trim().split(/\s+/u).length / (150 * input.speakingRate)) * 60_000));
     const sampleRate = 16000;
@@ -66,7 +68,7 @@ function runProcess(command: string, args: string[], input: string, env: NodeJS.
 }
 
 export class LocalTtsProvider implements TtsProvider {
-  get id(): string { return process.platform === 'win32' && this.env.TTS_WSL_DISTRO ? `local-espeak-wsl-v1:${this.env.TTS_WSL_DISTRO}` : 'local-system-v1'; }
+  get id(): string { return process.platform === 'win32' && this.env.TTS_WSL_DISTRO ? `local-espeak-wsl-wave-v2:${this.env.TTS_WSL_DISTRO}` : 'local-system-wave-v2'; }
   constructor(private readonly env: NodeJS.ProcessEnv = process.env) {}
 
   async synthesize(input: TtsInput): Promise<TtsResult> {
@@ -101,7 +103,7 @@ export class LocalTtsProvider implements TtsProvider {
 }
 
 export class OpenAiTtsProvider implements TtsProvider {
-  get id(): string { return `openai-audio-speech:${this.model}`; }
+  get id(): string { return `openai-audio-speech:wave-v2:${this.model}`; }
   constructor(private readonly apiKey: string, private readonly model: string, private readonly costPer1kChars: number | null) {}
 
   async synthesize(input: TtsInput): Promise<TtsResult> {
@@ -118,10 +120,56 @@ export class OpenAiTtsProvider implements TtsProvider {
   }
 }
 
+const voiceManifestSchema = z.object({ version: z.string().min(1).max(100), voices: z.array(z.object({ voiceId: z.string().min(1).max(80), name: z.string().min(1).max(160) })).max(100) });
+function voiceManifest(env: NodeJS.ProcessEnv) {
+  if (!env.TTS_VIENEU_VOICES_FILE) throw new Error('TTS_VIENEU_NOT_READY');
+  return voiceManifestSchema.parse(JSON.parse(readFileSync(env.TTS_VIENEU_VOICES_FILE, 'utf8')));
+}
+export function customVoiceProfile(asset: { id: string; kind: string; metadata: unknown; rightsMetadata: unknown }): VoiceProfile | undefined {
+  const metadata = z.object({ name: z.string().min(1).max(80), provider: z.literal('vieneu') }).safeParse(asset.metadata);
+  const rights = z.object({ attested: z.literal(true), approved: z.literal(true) }).safeParse(asset.rightsMetadata);
+  if (asset.kind !== 'VOICE_REFERENCE' || !metadata.success || !rights.success) return undefined;
+  return { id: `vieneu:custom:${asset.id}`, name: `${metadata.data.name} · giọng riêng`, provider: 'vieneu', language: 'vi', voiceId: asset.id, requiresCredentials: false };
+}
+export function validateVoiceReference(audio: Buffer): number {
+  if (audio.length > 3000000 || audio.length < 44) throw new Error('VOICE_REFERENCE_INVALID');
+  let pcm16 = false;
+  for (let offset = 12; offset + 8 <= audio.length;) {
+    const size = audio.readUInt32LE(offset + 4);
+    if (offset + 8 + size > audio.length) throw new Error('VOICE_REFERENCE_INVALID');
+    if (audio.toString('ascii', offset, offset + 4) === 'fmt ' && size >= 16) {
+      const channels = audio.readUInt16LE(offset + 10);
+      const sampleRate = audio.readUInt32LE(offset + 12);
+      pcm16 = audio.readUInt16LE(offset + 8) === 1 && [1, 2].includes(channels) && sampleRate >= 8000 && sampleRate <= 96000 && audio.readUInt16LE(offset + 22) === 16 && audio.readUInt16LE(offset + 20) === channels * 2 && audio.readUInt32LE(offset + 16) === sampleRate * channels * 2;
+    }
+    offset += 8 + size + size % 2;
+  }
+  const duration = waveDurationMs(audio);
+  if (!pcm16 || duration < 3000 || duration > 15000) throw new Error('VOICE_REFERENCE_INVALID');
+  return duration;
+}
+export class VieneuTtsProvider implements TtsProvider {
+  get id() { return `local-vieneu:wave-v2:${voiceManifest(this.env).version}`; }
+  constructor(private readonly env: NodeJS.ProcessEnv = process.env) {}
+  async synthesize(input: TtsInput): Promise<TtsResult> {
+    const url = new URL(this.env.TTS_LOCAL_URL ?? 'http://127.0.0.1:3002/speech');
+    if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || url.username || url.password || url.pathname !== '/speech' || url.search || url.hash) throw new Error('TTS_LOCAL_URL_INVALID');
+    const token = this.env.TTS_LOCAL_TOKEN;
+    if (!token || token.length < 32) throw new Error('TTS_PROVIDER_NOT_CONFIGURED');
+    const response = await fetch(url, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(180000), headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ text: input.text, voiceId: input.voiceId, speakingRate: input.speakingRate, ...(input.referenceAudio ? { referenceAudio: input.referenceAudio.toString('base64') } : {}) }) });
+    if (!response.ok) throw new Error('TTS_VIENEU_PROVIDER_FAILED');
+    if (!response.headers.get('content-type')?.startsWith('audio/wav')) throw new Error('TTS_INVALID_WAV');
+    const audio = Buffer.from(await response.arrayBuffer());
+    if (audio.length > 50000000) throw new Error('TTS_OUTPUT_TOO_LARGE');
+    return { audio, mimeType: 'audio/wav', durationMs: waveDurationMs(audio), provider: this.id, voiceId: input.voiceId, usageUnits: input.text.length, estimatedCostUsd: 0, timingPrecision: 'APPROXIMATE' };
+  }
+}
+
 export function createTtsProvider(env: NodeJS.ProcessEnv = process.env): TtsProvider {
   const provider = env.TTS_PROVIDER ?? 'local';
   if (provider === 'mock') return new MockTtsProvider();
   if (provider === 'local') return new LocalTtsProvider(env);
+  if (provider === 'vieneu') return new VieneuTtsProvider(env);
   if (provider === 'openai') {
     const apiKey = env.OPENAI_API_KEY;
     const model = env.TTS_MODEL ?? 'gpt-4o-mini-tts';
@@ -135,6 +183,10 @@ export function createTtsProvider(env: NodeJS.ProcessEnv = process.env): TtsProv
 }
 
 export function listVoiceProfiles(env: NodeJS.ProcessEnv = process.env): VoiceProfile[] {
+  if (env.TTS_PROVIDER === 'vieneu') {
+    try { return voiceManifest(env).voices.map((voice) => ({ id: `vieneu:${voice.voiceId}`, name: `${voice.name} · VieNeu local`, provider: 'vieneu' as const, language: 'vi', voiceId: voice.voiceId, requiresCredentials: false })); }
+    catch { return []; }
+  }
   if (env.TTS_PROVIDER === 'openai') return ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'marin', 'onyx', 'nova', 'sage', 'shimmer'].map((voiceId) => ({ id: `openai:${voiceId}`, name: `OpenAI ${voiceId}`, provider: 'openai', language: 'multilingual', voiceId, requiresCredentials: true }));
   if (env.TTS_PROVIDER === 'mock') return [{ id: 'mock:default', name: 'Deterministic demo tone', provider: 'mock', language: 'multilingual', voiceId: 'demo-tone', requiresCredentials: false }];
   if (process.platform === 'win32' && env.TTS_WSL_DISTRO) return [
@@ -153,7 +205,7 @@ export function listVoiceProfiles(env: NodeJS.ProcessEnv = process.env): VoicePr
 }
 
 export function audioCacheKey(input: TtsInput, provider: string): string {
-  return createHash('sha256').update(JSON.stringify([provider, input.language, input.voiceId, input.speakingRate, input.text])).digest('hex');
+  return createHash('sha256').update(JSON.stringify([provider, input.language, input.voiceId, input.speakingRate, input.text, ...(input.referenceAudio ? [createHash('sha256').update(input.referenceAudio).digest('hex')] : [])])).digest('hex');
 }
 
 export { waveDurationMs };

@@ -1,6 +1,10 @@
 # Phase 6 — Ổn định export local
 
+Chất lượng narration/subtitle và lỗi đo WAV được xử lý tiếp trong [Milestone 2](product/MILESTONE_2_REPORT.md). Báo cáo Phase 6 này giữ nguyên snapshot lịch sử của các gate reliability; không thay số liệu phase bằng kết quả mới.
+
 Đợt rà soát UI bổ sung sau Phase6 được ghi riêng tại [18-UI-STABILITY-REPORT.md](18-UI-STABILITY-REPORT.md); số liệu bên dưới giữ snapshot kiểm chứng của phase.
+
+Ngày 02/11/2026, UX Milestone 1 tổ chức lại navigation và bổ sung bản nháp kịch bản trước render. Báo cáo hiện hành: [product/MILESTONE_1_REPORT.md](product/MILESTONE_1_REPORT.md). `smoke:phase6` được mở rộng để kiểm tra thêm SCRIPT_ONLY không tạo media, lưu phiên bản, render đầu tiên qua story và replay idempotency; các kiểm tra hủy/timeout/phục hồi cũ vẫn giữ.
 
 Ngày kiểm chứng: **28/10/2026**, Windows + WSL Ubuntu. Phạm vi OWNER xác nhận: lịch sử render, hủy/timeout, phục hồi job và kiểm thử cho luồng local. Không xác nhận Phase 4/5 hoặc sản phẩm production đã hoàn tất.
 
@@ -101,3 +105,6 @@ Working tree còn có các files local-export baseline chưa commit từ lượt
 **Trạng thái: HOÀN TẤT phạm vi Phase6 local đã được OWNER xác nhận.** Các gate local nêu trên đã PASS. Production/social integrations và các giới hạn được liệt kê riêng không được đánh dấu shipped.
 
 Sau verification đã restart `local:export` với code mới. Web `/health`, `/export` và API `/health` trả 200; unauthenticated history trả 401. Web/API/discovery/media worker đang hoạt động tại loopback local, giữ nguyên dữ liệu. Route `/export` yêu cầu đăng nhập trước khi sử dụng.
+# Follow-up: local source screenshots
+
+The owner-requested dedicated-browser capture and original-image video flow are recorded in [SOURCE_CAPTURE_REPORT](product/SOURCE_CAPTURE_REPORT.md), with pinned [open-source research](research/VIDEO_READER_REFERENCES.md). This adds capture-job cancellation/recovery, source-image authorization/takedown and real screenshot rendering. It does not change the Phase 4 publishing approval gates.

@@ -62,7 +62,7 @@ integration('media recovery with PostgreSQL and an isolated BullMQ queue', () =>
       const processor = new IORedis(process.env.REDIS_URL!, { maxRetriesPerRequest: null });
       const eventsRedis = new IORedis(process.env.REDIS_URL!, { maxRetriesPerRequest: null });
       const events = new QueueEvents(queue.name, { connection: eventsRedis }); let deliveries = 0;
-      const worker = new Worker<MediaEnvelope>(queue.name, async (next) => { deliveries += 1; await db.productionRun.updateMany({ where: { id: next.data.entityId, workspaceId: next.data.workspaceId, status: 'QUEUED' }, data: { status: 'SUCCEEDED', completedAt: new Date() } }); return 'restored'; }, { connection: processor });
+      const worker = new Worker<MediaEnvelope>(queue.name, async (next) => { if (next.data.jobId !== f.event.id) return 'unrelated'; deliveries += 1; await db.productionRun.updateMany({ where: { id: f.run.id, workspaceId: f.workspace.id, status: 'QUEUED' }, data: { status: 'SUCCEEDED', completedAt: new Date() } }); return 'restored'; }, { connection: processor });
       try { await Promise.all([events.waitUntilReady(), worker.waitUntilReady()]); expect(await restored!.waitUntilFinished(events, 10_000)).toBe('restored'); expect(deliveries).toBe(1); }
       finally { await worker.close(); await events.close(); await Promise.all([processor.quit(), eventsRedis.quit()]); }
       expect(await recoverMediaJobs(db, queue, config, new Date(now.getTime() + 60_000))).toBe(0);

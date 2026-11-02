@@ -4,7 +4,7 @@ A hybrid editorial MVP with workspace isolation from the first import. Phase 0�
 
 ## Start locally
 
-For the minimal local export workflow, see [Vietnamese local export guide](docs/16-LOCAL-EXPORT.md). With the configured local PostgreSQL/Redis and eSpeak NG runtime, run `pnpm local:export` and open `http://127.0.0.1:3000/export`. Paste a Facebook/Threads reference link **and the authorized post/comment text**, review it, render with offline narration, and download the MP4. Automatic link retrieval and social posting are not enabled.
+For local export, see the [Vietnamese guide](docs/16-LOCAL-EXPORT.md). With PostgreSQL/Redis configured, run `pnpm local:tts:setup` for VieNeu and `pnpm local:capture:setup` for the local `ai-comment` checkout, then `pnpm local:export`. In Studio → Import, paste a Facebook/Threads post link, open the dedicated login browser, request original post/comment screenshots, review images and rights, then render and download MP4. Text import remains an explicit alternative. Capture is user-initiated and local-only; social posting remains disabled. See [source evaluation](docs/research/VIDEO_READER_REFERENCES.md) and [verification](docs/product/SOURCE_CAPTURE_REPORT.md).
 
 Install Node.js 22.12 or later, pnpm 11.25.0 and Docker with Compose, then run from the repository root:
 
@@ -21,6 +21,7 @@ See [local development](docs/11-LOCAL-DEVELOPMENT.md) for worker commands and th
 
 ## Available now
 
+- Content Studio Milestone 1: five primary areas (Overview, Discover, Studio, Publish, Analytics), with Settings and legacy tools kept separate. Discover carries selected source context into editable script drafts before explicit MP4 rendering. See the [UX delivery report](docs/product/MILESTONE_1_REPORT.md) and [source-level open-source evaluation](docs/research/OPEN_SOURCE_MODULE_EVALUATION.md).
 - Password sign-in, opaque hashed sessions, workspace creation and membership roles.
 - Tenant-scoped CRUD for sources and topic rules; manual imports and explicitly labeled synthetic demo discovery.
 - PostgreSQL transactional outbox, BullMQ relay/scheduler, idempotent sync runs, normalized comments/metrics and duplicate counts.
@@ -29,10 +30,13 @@ See [local development](docs/11-LOCAL-DEVELOPMENT.md) for worker commands and th
 - Server-side rights eligibility checks, author deletion/takedown handling and audit records.
 - Dashboard, channels, source controls and sync history, all-post and candidate-library views, rights review and workspace/topic settings.
 - PostgreSQL migrations, Redis/BullMQ worker, immutable local object storage, typed adapter contracts and development mocks.
-- `/studio` selects approved candidates, creates source-grounded scripts, edits versions, queues production, shows durable stage progress, previews completed MP4s, and downloads authorized media. Runs and media are workspace-scoped and rights-checked again before access.
+- `/discover` filters saved source posts, previews originals/comments/rights/score, supports explicit bulk candidate approval, and opens a bounded editing queue. `/studio` creates script-only drafts, edits versions, previews speech, explicitly renders/rerenders MP4s, records review and downloads authorized media. Run/video deep links preserve source context. Runs and media are workspace-scoped and rights-checked again before access.
+- For Facebook/Threads local export, run `pnpm local:export` and open **Studio → Nhập bài mới**, or visit `/export`. Supply the source link and permitted text/comments; a link alone does not fetch platform content. `/publish` exposes read-only account status and reviewed MP4 handoff; live publishing stays blocked.
+- Local neural speech: `pnpm local:tts:setup` installs isolated VieNeu; `pnpm local:export` then loads its presets and private custom voices. Batch comment import preserves supplied reactions and automatically selects 5–10 by video target length. See [local comments and narration](docs/product/LOCAL_COMMENTS_TTS_REPORT.md) for setup, tested behavior and source-access limits.
+- Milestone 2 adds short voice preview, complete comment excerpts, actual-audio duration fitting and local multilingual forced alignment for new VieNeu productions. Run `pnpm local:tts:setup` again to install the pinned alignment dependencies; see [Milestone 2 verification](docs/product/MILESTONE_2_REPORT.md).
 - `/export` provides the local manual Facebook/Threads reference + supplied content workflow, workspace render history/resume, cancellation, render deadlines and reviewed MP4 download. PostgreSQL-backed recovery restores missing media/manual-import queue deliveries. See the [Phase 6 report](docs/17-PHASE-6-REPORT.md) for verification and remaining limits.
 - Remotion renders two deterministic vertical templates with stylized Reddit, Threads, Facebook and manual post/comment cards, approved static image backgrounds, narration audio, SRT/subtitle timelines and metadata checks. The committed smoke command renders a real sample MP4.
-- Script generation has deterministic and optional OpenAI adapters. TTS has deterministic tone, local speech (SAPI/eSpeak NG), and optional OpenAI adapters. Approximate subtitle word timings are marked as approximate.
+- Script generation has deterministic and optional OpenAI adapters. TTS has deterministic tone, SAPI/eSpeak, VieNeu and optional OpenAI adapters. New VieNeu runs use forced word alignment; legacy/other voices retain explicitly approximate timings.
 - `/autopilot` stores immutable rule versions and per-run snapshots, schedules work with timezone-aware rules, ranks eligible candidates, reserves estimated budget, supports dry run/cancel/retry/emergency stop, and routes output through the existing media worker and human QC approval.
 - `/analytics` records nullable metrics with provider/scope/freshness metadata, shows history and sample-backed recommendations, and keeps experiments review-required. Missing metrics are not represented as zeros.
 - A PostgreSQL outbox-backed automation worker resumes runs and analytics syncs. Test-only YouTube/Facebook publication uses the explicit mock adapter; provider publishing and live analytics remain blocked pending verified access.

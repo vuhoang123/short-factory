@@ -10,6 +10,12 @@ import { compositionInputSchema, type CompositionInput } from './contracts.js';
 export interface RenderProgress { progress: number; renderedFrames: number; totalFrames: number }
 export interface RenderResult { width: number; height: number; fps: number; durationMs: number; codec: string; audioCodec: string | null; sizeBytes: number }
 export interface RenderControl { signal?: AbortSignal; timeoutMs?: number }
+export interface VideoRenderProvider {
+  readonly id: string;
+  render(input: CompositionInput, output: string, onProgress?: (progress: RenderProgress) => void, control?: RenderControl): Promise<RenderResult>;
+}
+
+export const remotionRenderProvider: VideoRenderProvider = { id: 'remotion-local', render: renderVideo };
 
 export const renderResultSchema = z.object({ width: z.literal(1080), height: z.literal(1920), fps: z.literal(30), durationMs: z.number().int().positive(), codec: z.literal('h264'), audioCodec: z.literal('aac'), sizeBytes: z.number().int().positive() }).strict();
 const renderMessageSchema = z.discriminatedUnion('type', [

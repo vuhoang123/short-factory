@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { PrismaClient } from '@shorts-factory/database';
+import { Prisma, type PrismaClient } from '@shorts-factory/database';
 import type { Queue } from 'bullmq';
 import { describe, expect, it, vi } from 'vitest';
 import { readMediaWorkerConfig } from './config.js';
@@ -61,4 +61,17 @@ describe('PostgreSQL media delivery recovery', () => {
     expect(await recoverMediaJobs(f.db, f.queue, f.config, f.now)).toBe(0);
     expect(f.getJob).not.toHaveBeenCalled(); expect(f.outbox.updateMany).not.toHaveBeenCalled();
   });
+});
+
+it('defers a competing serializable recovery to the next sweep and propagates other DB failures', async () => {
+  const config = readMediaWorkerConfig({ DATABASE_URL: 'postgresql://localhost/unused_test', REDIS_URL: 'redis://localhost' });
+  const transaction = vi.fn();
+  const db = { $queryRaw: vi.fn(async () => [{ id: 'event', workspaceId: 'workspace' }]), $transaction: transaction } as unknown as PrismaClient;
+  const queue = {} as Queue<MediaEnvelope>;
+  for (const failure of [new Prisma.PrismaClientKnownRequestError('conflict', { code: 'P2034', clientVersion: 'test' }), new Prisma.PrismaClientKnownRequestError('conflict', { code: 'P2010', clientVersion: 'test', meta: { code: '40001' } })]) {
+    transaction.mockRejectedValueOnce(failure);
+    await expect(recoverMediaJobs(db, queue, config)).resolves.toBe(0);
+  }
+  transaction.mockRejectedValueOnce(new Error('database unavailable'));
+  await expect(recoverMediaJobs(db, queue, config)).rejects.toThrow('database unavailable');
 });

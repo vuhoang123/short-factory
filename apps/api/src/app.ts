@@ -13,6 +13,7 @@ import { ApiError } from './errors.js';
 import { ProductionService } from './production.service.js';
 import { AutomationService } from './automation.service.js';
 import { AnalyticsService } from './analytics.service.js';
+import { StudioService } from './studio.service.js';
 
 const AUTH = Symbol('AuthService');
 const CONTENT = Symbol('ContentService');
@@ -21,6 +22,7 @@ const DATABASE = Symbol('Database');
 const PRODUCTION = Symbol('ProductionService');
 const AUTOMATION = Symbol('AutomationService');
 const ANALYTICS = Symbol('AnalyticsService');
+const STUDIO = Symbol('StudioService');
 type ApiRequest = Request & { requestId: string };
 
 @Catch()
@@ -93,9 +95,15 @@ class ContentController {
   @Get('candidates') candidates(@Req() request: Request, @Query() query: unknown) { return this.discovery.candidates(request, query); }
   @Post('candidates/:id/review') reviewCandidate(@Req() request: Request, @Param('id') id: string, @Body() body: unknown) { z.string().uuid().parse(id); return this.discovery.reviewCandidate(request, id, body); }
   @Post('imports/manual') import(@Req() request: Request, @Body() body: unknown) { return this.content.importManual(request, body); }
+  @Post('source-captures/browser') openCaptureBrowser(@Req() request: Request, @Body() body: unknown) { return this.content.openCaptureBrowser(request, body); }
+  @Post('source-captures') createCapture(@Req() request: Request, @Body() body: unknown) { return this.content.createCapture(request, body); }
+  @Get('source-captures/:id') capture(@Req() request: Request, @Param('id') id: string) { z.string().uuid().parse(id); return this.content.capture(request, id); }
+  @Post('source-captures/:id/cancel') cancelCapture(@Req() request: Request, @Param('id') id: string) { z.string().uuid().parse(id); return this.content.cancelCapture(request, id); }
+  @Get('posts/:id/source-images') sourceImages(@Req() request: Request, @Param('id') id: string) { z.string().uuid().parse(id); return this.content.sourceImages(request, id); }
   @Get('posts') posts(@Req() request: Request, @Query() query: unknown) { return this.content.posts(request, query); }
   @Get('posts/:id') post(@Req() request: Request, @Param('id') id: string) { z.string().uuid().parse(id); return this.content.post(request, id); }
   @Get('posts/:id/comments') comments(@Req() request: Request, @Param('id') id: string, @Query() query: unknown) { z.string().uuid().parse(id); return this.content.comments(request, id, query); }
+  @Get('posts/:id/comment-selection') commentSelection(@Req() request: Request, @Param('id') id: string, @Query() query: unknown) { z.string().uuid().parse(id); return this.content.commentSelection(request, id, query); }
   @Get('posts/:id/eligibility') eligibility(@Req() request: Request, @Param('id') id: string, @Query() query: unknown) { z.string().uuid().parse(id); return this.content.eligibility(request, id, query); }
   @Post('posts/:id/rights/review') review(@Req() request: Request, @Param('id') id: string, @Body() body: unknown) { z.string().uuid().parse(id); return this.content.review(request, id, body); }
   @Post('takedowns') takedown(@Req() request: Request, @Body() body: unknown) { return this.content.takedown(request, body); }
@@ -111,6 +119,7 @@ class ProductionController {
   constructor(@Inject(PRODUCTION) private readonly production: ProductionService) {}
 
   @Get('voice-profiles') voices(@Req() request: Request) { return this.production.voiceProfiles(request); }
+  @Post('voice-profiles') uploadVoice(@Req() request: Request, @Body() body: unknown) { return this.production.uploadVoice(request, body); }
   @Get('video-templates') templates(@Req() request: Request) { return this.production.templates(request); }
   @Get('backgrounds') backgrounds(@Req() request: Request) { return this.production.backgrounds(request); }
   @Post('backgrounds') uploadBackground(@Req() request: Request) { return this.production.uploadBackground(request, request.body); }
@@ -120,6 +129,7 @@ class ProductionController {
   @Patch('stories/:id') editStory(@Req() request: Request, @Param('id') id: string, @Body() body: unknown) { z.string().uuid().parse(id); return this.production.editStory(request, id, body); }
   @Post('stories/:id/regenerate') regenerate(@Req() request: Request, @Param('id') id: string, @Body() body: unknown) { z.string().uuid().parse(id); return this.production.regenerateStory(request, id, body); }
   @Post('stories/:id/audio') audio(@Req() request: Request, @Param('id') id: string, @Body() body: unknown) { z.string().uuid().parse(id); return this.production.requestAudio(request, id, body); }
+  @Post('stories/:id/render') renderStory(@Req() request: Request, @Param('id') id: string, @Body() body: unknown) { z.string().uuid().parse(id); return this.production.renderStory(request, id, body); }
   @Get('production-runs/:id') run(@Req() request: Request, @Param('id') id: string) { z.string().uuid().parse(id); return this.production.productionRun(request, id); }
   @Get('production-runs') runs(@Req() request: Request, @Query() query: unknown) { return this.production.productionRuns(request, query); }
   @Post('production-runs/:id/cancel') cancelRun(@Req() request: Request, @Param('id') id: string, @Body() body: unknown) { z.string().uuid().parse(id); return this.production.cancelRun(request, id, body); }
@@ -171,6 +181,14 @@ class HealthController {
   }
 }
 
+@Controller('api/v1/studio')
+class StudioController {
+  constructor(@Inject(STUDIO) private readonly studio: StudioService) {}
+  @Get('content') content(@Req() request: Request, @Query() query: unknown) { return this.studio.items(request, query); }
+  @Get('content/:id') detail(@Req() request: Request, @Param('id') id: string) { z.string().uuid().parse(id); return this.studio.items(request, {}, id); }
+  @Get('overview') overview(@Req() request: Request) { return this.studio.overview(request); }
+}
+
 @Module({})
 class AppModule {}
 
@@ -182,7 +200,8 @@ export async function createApp(database = new PrismaClient()) {
   const production = new ProductionService(database, auth);
   const automation=new AutomationService(database,auth);
   const analytics=new AnalyticsService(database,auth);
-  const app = await NestFactory.create({ module: AppModule, controllers: [IdentityController, ContentController, ProductionController, Phase5Controller, HealthController], providers: [{ provide: DATABASE, useValue: database }, { provide: AUTH, useValue: auth }, { provide: CONTENT, useValue: content }, { provide: DISCOVERY, useValue: discovery }, { provide: PRODUCTION, useValue: production }, {provide:AUTOMATION,useValue:automation},{provide:ANALYTICS,useValue:analytics}, { provide: 'DATABASE_LIFECYCLE', useValue: { onApplicationShutdown: () => database.$disconnect() } }] }, { logger: false, bodyParser: false });
+  const studio = new StudioService(database, auth);
+  const app = await NestFactory.create({ module: AppModule, controllers: [IdentityController, ContentController, ProductionController, Phase5Controller, StudioController, HealthController], providers: [{ provide: DATABASE, useValue: database }, { provide: AUTH, useValue: auth }, { provide: CONTENT, useValue: content }, { provide: DISCOVERY, useValue: discovery }, { provide: PRODUCTION, useValue: production }, {provide:AUTOMATION,useValue:automation},{provide:ANALYTICS,useValue:analytics}, { provide: STUDIO, useValue: studio }, { provide: 'DATABASE_LIFECYCLE', useValue: { onApplicationShutdown: () => database.$disconnect() } }] }, { logger: false, bodyParser: false });
   app.use((request: ApiRequest, response: Response, next: NextFunction) => {
     request.requestId = randomUUID();
     response.setHeader('X-Request-ID', request.requestId);
@@ -194,6 +213,7 @@ export async function createApp(database = new PrismaClient()) {
     next();
   });
   app.use('/api/v1/backgrounds', express.raw({ type: 'image/*', limit: config.MEDIA_MAX_UPLOAD_BYTES }));
+  app.use('/api/v1/voice-profiles', express.raw({ type: ['audio/wav', 'audio/x-wav'], limit: 3000000 }));
   app.use(express.json({ limit: config.IMPORT_MAX_BYTES, strict: true }));
   app.useGlobalFilters(new ErrorFilter());
   if (process.env.NODE_ENV !== 'production') {

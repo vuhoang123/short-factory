@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { PrismaClient } from '@shorts-factory/database';
-import { DeterministicMockScriptProvider, LocalObjectStore, createRenderManifest, type ProductionInput, type StoryScript } from '@shorts-factory/media';
+import { DeterministicMockScriptProvider, LocalNarrationProcessor, LocalObjectStore, LocalTtsProvider, MockTtsProvider, createRenderManifest, type ProductionInput, type StoryScript } from '@shorts-factory/media';
 import { afterEach, expect, it, vi } from 'vitest';
 import { readMediaWorkerConfig } from './config.js';
 import { MediaProductionPipeline } from './pipeline.js';
@@ -10,8 +10,10 @@ interface TestAudio {
   mediaAsset: { id: string; checksum: string; mimeType: string };
 }
 interface AudioSteps {
+  source(run: unknown, input: ProductionInput): { comments: Array<{ id: string }> };
   generateAudio(run: unknown, input: ProductionInput, version: unknown, script: StoryScript): Promise<TestAudio[]>;
-  alignAudio(run: unknown, input: ProductionInput, script: StoryScript, audio: TestAudio[]): Promise<{ segments: Array<{ startMs: number; endMs: number }> }>;
+  alignAudio(run: unknown, input: ProductionInput, script: StoryScript, audio: TestAudio[]): Promise<{ timingPrecision: string; provider?: string; adjustedWords?: number; segments: Array<{ startMs: number; endMs: number; providerTimings?: Array<{ text: string; startMs: number; endMs: number }> }> }>;
+  fitAudioDuration(run: unknown, input: ProductionInput, version: unknown, script: StoryScript, audio: TestAudio[]): Promise<TestAudio[]>;
 }
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
@@ -78,6 +80,80 @@ it('keeps audio for all three comments and their repeated transitions, then repl
   expect(new Set(f.audio.map((row) => row.cacheKey)).size).toBe(f.script.segments.length);
   await f.steps.generateAudio(f.run, f.input, f.version, f.script);
   expect(f.audio).toHaveLength(f.script.segments.length);
+});
+
+it('preserves frozen reaction/selection order independently of database comment row order', async () => {
+  const f = await fixture();
+  const commentIds = [...f.input.commentIds].reverse();
+  expect(f.steps.source(f.run, { ...f.input, commentIds }).comments.map((comment) => comment.id)).toEqual(commentIds);
+  expect(() => f.steps.source(f.run, { ...f.input, commentIds: [randomUUID()] })).toThrow('COMMENT_NOT_IN_SOURCE');
+});
+
+it('preserves a queued local speech job after the launcher changes its default to VieNeu', async () => {
+  const f = await fixture();
+  vi.stubEnv('TTS_PROVIDER', 'vieneu');
+  vi.stubEnv('TTS_WSL_DISTRO', 'Ubuntu');
+  const synthesize = vi.spyOn(LocalTtsProvider.prototype, 'synthesize').mockImplementation((input) => new MockTtsProvider().synthesize(input));
+  const input = { ...f.input, voiceProfileId: 'local:vietnamese', voiceId: 'vi' };
+  const audio = await f.steps.generateAudio(f.run, input, f.version, f.script);
+  expect(audio).toHaveLength(f.script.segments.length);
+  expect(synthesize).toHaveBeenCalled();
+});
+
+it('generates only a short sample at the selected rate and keeps it separate from full narration', async () => {
+  const f = await fixture();
+  const preview = await f.steps.generateAudio(f.run, { ...f.input, mode: 'AUDIO_ONLY', preview: true, speakingRate: 1.15 }, f.version, f.script);
+  expect(preview).toHaveLength(1);
+  expect(preview[0]).toMatchObject({ segmentId: 'voice-preview' });
+  expect(preview[0]!.durationMs).toBeLessThan(15000);
+  const full = await f.steps.generateAudio({ ...f.run, id: randomUUID() }, f.input, f.version, f.script);
+  expect(full.every((row) => row.id !== preview[0]!.id)).toBe(true);
+  expect(full).toHaveLength(f.script.segments.length);
+});
+
+it('checkpoints fitted audio without overwriting raw narration, and replays the same selection', async () => {
+  const f = await fixture();
+  const raw = await f.steps.generateAudio(f.run, f.input, f.version, f.script);
+  const header = (await new MockTtsProvider().synthesize({ text: 'one', language: 'en', voiceId: 'mock', speakingRate: 1 })).audio.subarray(0, 44);
+  vi.spyOn(LocalObjectStore.prototype, 'get').mockResolvedValue(Buffer.from(header));
+  const retime = vi.spyOn(LocalNarrationProcessor.prototype, 'retime').mockImplementation(async (_bytes, duration) => {
+    const size = Math.round(duration * 16) * 2;
+    const bytes = Buffer.concat([header, Buffer.alloc(size)]); bytes.writeUInt32LE(size + 36, 4); bytes.writeUInt32LE(size, 40);
+    return bytes;
+  });
+  const targetDurationSec = Math.round((raw.reduce((total, row) => total + row.durationMs, 0) + (raw.length - 1) * 100) / 1000);
+  const input = { ...f.input, audioTimed: true as const, targetDurationSec };
+  const fitted = await f.steps.fitAudioDuration(f.run, input, f.version, f.script, raw);
+  expect(fitted.every((row) => !raw.some((item) => item.id === row.id))).toBe(true);
+  expect(Math.abs(fitted.reduce((total, row) => total + row.durationMs, (fitted.length - 1) * 100) - targetDurationSec * 1000)).toBeLessThan(10);
+  expect((await f.steps.fitAudioDuration(f.run, input, f.version, f.script, raw)).map((row) => row.id)).toEqual(fitted.map((row) => row.id));
+  expect(retime).toHaveBeenCalledTimes(raw.length);
+});
+
+it('checkpoints forced word offsets and bounded adjustment counts, releasing local model memory once', async () => {
+  const f = await fixture();
+  const audio = await f.steps.generateAudio(f.run, f.input, f.version, f.script);
+  vi.spyOn(LocalObjectStore.prototype, 'get').mockResolvedValue(Buffer.alloc(4));
+  const align = vi.spyOn(LocalNarrationProcessor.prototype, 'align').mockImplementation(async (_audio, text) => ({ provider: 'fixture-forced-aligner', adjustedWords: 1, words: text.split(/\s+/u).map((word, index) => ({ text: word, startMs: index * 100, endMs: index * 100 + 80 })) }));
+  const release = vi.spyOn(LocalNarrationProcessor.prototype, 'release').mockResolvedValue(undefined);
+  const input = { ...f.input, audioTimed: true as const };
+  const output = await f.steps.alignAudio(f.run, input, f.script, audio);
+  expect(output).toMatchObject({ timingPrecision: 'PROVIDER', provider: 'fixture-forced-aligner', adjustedWords: f.script.segments.length });
+  expect(output.segments[1]?.providerTimings?.[0]?.startMs).toBe(audio[0]!.durationMs + 100);
+  expect(await f.steps.alignAudio(f.run, input, f.script, audio)).toEqual(output);
+  expect(align).toHaveBeenCalledTimes(f.script.segments.length);
+  expect(release).toHaveBeenCalledOnce();
+});
+
+it('releases model memory after a failed alignment and leaves that stage retryable', async () => {
+  const f = await fixture();
+  const audio = await f.steps.generateAudio(f.run, f.input, f.version, f.script);
+  vi.spyOn(LocalObjectStore.prototype, 'get').mockResolvedValue(Buffer.alloc(4));
+  vi.spyOn(LocalNarrationProcessor.prototype, 'align').mockRejectedValue(new Error('AUDIO_ALIGNMENT_FAILED'));
+  const release = vi.spyOn(LocalNarrationProcessor.prototype, 'release').mockResolvedValue(undefined);
+  await expect(f.steps.alignAudio(f.run, { ...f.input, audioTimed: true }, f.script, audio)).rejects.toThrow('AUDIO_ALIGNMENT_FAILED');
+  expect(release).toHaveBeenCalledOnce();
+  expect(f.stages.get(`${f.run.id}:AUDIO_ALIGNMENT`)?.status).toBe('FAILED');
 });
 
 it('freezes each run audio selection and excludes earlier rates from duration and alignment', async () => {

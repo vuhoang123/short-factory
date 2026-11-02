@@ -6,12 +6,14 @@ const mocks = vi.hoisted(() => ({
   bundle: vi.fn(), prepareServer: vi.fn(), closeServer: vi.fn(), closeBrowser: vi.fn(),
   openBrowser: vi.fn(), select: vi.fn(), render: vi.fn(), inspect: vi.fn(), cancel: vi.fn(), send: vi.fn(),
   on: vi.fn(), once: vi.fn(), exit: vi.fn(), kill: vi.fn(), killTree: vi.fn(), connected: true, platform: 'win32',
+  writeFile: vi.fn(),
 }));
 vi.mock('node:process', () => ({ default: {
   get connected() { return mocks.connected; }, get platform() { return mocks.platform; }, env: {}, pid: 12345, cwd: () => '.',
   on: mocks.on, once: mocks.once, exit: mocks.exit, send: mocks.send, kill: mocks.kill,
 } }));
 vi.mock('node:child_process', () => ({ spawnSync: mocks.killTree }));
+vi.mock('node:fs/promises', () => ({ writeFile: mocks.writeFile }));
 vi.mock('@remotion/bundler', () => ({ bundle: mocks.bundle }));
 vi.mock('@remotion/renderer', () => ({
   RenderInternals: { prepareServer: mocks.prepareServer },
@@ -48,6 +50,7 @@ beforeEach(async () => {
   mocks.openBrowser.mockResolvedValue({ close: mocks.closeBrowser });
   mocks.select.mockResolvedValue({ durationInFrames: 60 });
   mocks.render.mockResolvedValue(undefined);
+  mocks.writeFile.mockResolvedValue(undefined);
   mocks.inspect.mockResolvedValue({ width: 1080, height: 1920 });
   mocks.send.mockImplementation((_message: unknown, callback?: () => void) => { callback?.(); return true; });
   mocks.on.mockImplementation((event: string, listener: (raw: unknown) => void) => { if (event === 'message') onMessage = listener; });
@@ -70,6 +73,19 @@ it('shares an owned numeric loopback URL on an OS allocated port for selection a
   expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'complete' }), expect.any(Function));
 });
 
+it('serves narration from owned temporary files instead of copying base64 audio into each render page', async () => {
+  const message = startMessage();
+  const assetId = message.inputProps.manifest.audioAssets[0]!.assetId;
+  const bytes = Buffer.from('owned synthetic audio');
+  message.inputProps.audioSources = { [assetId]: `data:audio/wav;base64,${bytes.toString('base64')}` };
+  onMessage(message);
+  await vi.waitFor(() => expect(mocks.exit).toHaveBeenCalled());
+  expect(mocks.writeFile).toHaveBeenCalledWith(expect.stringMatching(/owned-bundle[/\\]narration-[a-f0-9]{64}\.wav$/u), bytes, { mode: 0o600 });
+  const selected = mocks.select.mock.calls[0]![0] as { inputProps: { audioSources: Record<string, string> } };
+  expect(selected.inputProps.audioSources[assetId]).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/narration-[a-f0-9]{64}\.wav$/u);
+  expect(mocks.render.mock.calls[0]![0].inputProps.audioSources).toEqual(selected.inputProps.audioSources);
+});
+
 it('closes the owned server when selecting the composition fails', async () => {
   mocks.select.mockRejectedValueOnce(new Error('COMPOSITION_INVALID'));
   onMessage(startMessage());
@@ -77,6 +93,19 @@ it('closes the owned server when selecting the composition fails', async () => {
   expect(mocks.closeServer).toHaveBeenCalledExactlyOnceWith(true);
   expect(mocks.render).not.toHaveBeenCalled();
   expect(mocks.send).toHaveBeenCalledWith({ type: 'failed', code: 'COMPOSITION_INVALID' }, expect.any(Function));
+});
+
+it('serves source screenshots from owned PNG files with the same cancellation cleanup scope', async () => {
+  const message = startMessage();
+  const assetId = message.inputProps.manifest.audioAssets[0]!.assetId;
+  const bytes = Buffer.from('owned screenshot PNG fixture');
+  const sourceImageSources = { [assetId]: `data:image/png;base64,${bytes.toString('base64')}` };
+  onMessage({ ...message, inputProps: { ...message.inputProps, sourceImageSources } });
+  await vi.waitFor(() => expect(mocks.exit).toHaveBeenCalled());
+  expect(mocks.writeFile).toHaveBeenCalledWith(expect.stringMatching(/owned-bundle[/\\]source-[a-f0-9]{64}\.png$/u), bytes, { mode: 0o600 });
+  const selected = mocks.select.mock.calls[0]![0] as { inputProps: { sourceImageSources: Record<string, string> } };
+  expect(selected.inputProps.sourceImageSources[assetId]).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/source-[a-f0-9]{64}\.png$/u);
+  expect(mocks.closeServer).toHaveBeenCalledExactlyOnceWith(true);
 });
 
 it('closes only the owned server when a render is cancelled', async () => {

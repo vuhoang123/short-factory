@@ -37,7 +37,7 @@ export class ProviderMetadataAlignmentProvider implements AudioAlignmentProvider
   align(input: AlignmentInput): AlignmentResult {
     const words = input.providerTimings;
     const expected = input.text.trim().match(/[^\s]+/gu) ?? [];
-    if (words?.length === expected.length && words.every((word, index) => word.text === expected[index] && word.startMs >= input.startMs && word.endMs > word.startMs && word.endMs <= input.endMs)) {
+    if (words?.length === expected.length && words.every((word, index) => word.text === expected[index] && Number.isInteger(word.startMs) && Number.isInteger(word.endMs) && word.startMs >= (words[index - 1]?.endMs ?? input.startMs) && word.endMs > word.startMs && word.endMs <= input.endMs)) {
       return { words, timingPrecision: 'PROVIDER' };
     }
     return this.fallback.align(input);

@@ -10,6 +10,7 @@ You are implementing Shorts Factory, a production-minded hybrid MVP. Read all fi
 - Store no plaintext OAuth secrets in application DB; use encrypted secret references/KMS envelope encryption. Never log secrets or post raw private data.
 - External APIs are accessed only via adapters; include mocked adapters for local development.
 - DO NOT bypass platform limits or use stealth browser/cookie scraping to access Facebook Groups, Threads or Reddit. Use only approved APIs or licensed/user-supplied data.
+- Owner instruction on 2026-11-02 additionally authorizes bounded, user-initiated local Facebook/Threads capture in a dedicated visible browser: user logs in themselves, requests screenshots, reviews source images and declares rights before rendering. This local-only adapter does not authorize stealth, normal-profile/cookie extraction, bypassing account/platform access controls, unattended crawling or publishing. Production use stays disabled.
 - Rights unknown = do not automatically publish. Ensure explicit user review or verified allowed usage before scheduling. Handle personal data minimization, author deletion/takedown and attribution rules.
 - TikTok is export/manual-handoff by default; enable API direct post only after confirmed product eligibility, permissions, creator consent and approval.
 - Mark features requiring approvals as `BLOCKED_EXTERNAL`, not as shipped. Do not simulate successful third-party publishing in production.

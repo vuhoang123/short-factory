@@ -65,7 +65,8 @@ describe('local export input boundary', () => {
     for (const invalid of [{ body: '' }, { attested: false }, { commercialAllowed: false }, { allowedPlatforms: [] }]) {
       expect(() => createLocalImport({ ...draft, ...invalid })).toThrow();
     }
-    expect(() => createLocalImport({ ...draft, comments: Array.from({ length: 9 }, (_, i) => `Comment ${i}`).join('\n') })).toThrow();
+    expect(createLocalImport({ ...draft, comments: Array.from({ length: 20 }, (_, i) => `Comment ${i}`).join('\n') }).comments).toHaveLength(20);
+    expect(() => createLocalImport({ ...draft, comments: Array.from({ length: 501 }, (_, i) => `Comment ${i}`).join('\n') })).toThrow();
   });
   it('requires evidence for licensed content and explicit attribution text when necessary', () => {
     expect(() => createLocalImport({ ...draft, basis: 'LICENSED' })).toThrow();

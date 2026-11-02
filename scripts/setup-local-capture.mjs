@@ -1,0 +1,20 @@
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+if (existsSync(path.join(root, '.env'))) process.loadEnvFile(path.join(root, '.env'));
+const engine = path.resolve(process.env.LOCAL_CAPTURE_ENGINE_PATH ?? path.join(root, '..', 'ai-comment'));
+if (!existsSync(path.join(engine, 'app', 'importer.py'))) throw new Error('Set LOCAL_CAPTURE_ENGINE_PATH to your local ai-comment checkout. No engine source is redistributed.');
+const data = path.join(root, '.data', 'source-capture');
+const python = path.join(data, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
+mkdirSync(data, { recursive: true });
+function run(cmd, args) { if (spawnSync(cmd, args, { cwd: root, env: { ...process.env, PLAYWRIGHT_BROWSERS_PATH: path.join(data, 'browsers') }, stdio: 'inherit', windowsHide: true }).status !== 0) throw new Error('Source capture setup failed.'); }
+if (!existsSync(python)) run(process.platform === 'win32' ? 'python' : 'python3', ['-m', 'venv', path.dirname(path.dirname(python))]);
+run(python, ['-m', 'pip', 'install', '-r', path.join(root, 'scripts', 'requirements-capture.txt')]);
+run(python, ['-m', 'playwright', 'install', 'chromium']);
+const files = readdirSync(path.join(engine, 'app'), { recursive: true }).filter(f => typeof f === 'string' && f.endsWith('.py')).sort();
+const hashes = Object.fromEntries(files.map(f => [f.replaceAll('\\', '/'), createHash('sha256').update(readFileSync(path.join(engine, 'app', f))).digest('hex')]));
+writeFileSync(path.join(data, 'engine.json'), JSON.stringify({ engine, hashes }, null, 2), { mode: 0o600 });
+console.log('Capture installed. The engine stays in its own checkout; profiles and images stay in this project. Run pnpm local:export.');

@@ -35,9 +35,10 @@ it('keeps generated and edited source segments grounded to supplied post/comment
 });
 
 it('allows a shortened verbatim comment only when it is an exact excerpt of the referenced comment', async () => {
-  const result = await new DeterministicMockScriptProvider().generate({ source, language: 'en', targetDurationSec: 20, style: 'STORYTELLING' });
-  expect(result.script.segments.find((segment) => segment.type === 'COMMENT')?.text.length).toBeLessThan(source.comments[0]!.body.length);
-  expect(() => assertGroundedScript(result.script, source)).not.toThrow();
+  const longer = { ...source, comments: [{ ...source.comments[0]!, body: source.comments[0]!.body + ' Sau đó mọi người cùng kiểm tra lại chiếc xe trước khi mang trả cho người hàng xóm.' }] };
+  const result = await new DeterministicMockScriptProvider().generate({ source: longer, language: 'en', targetDurationSec: 20, style: 'STORYTELLING' });
+  expect(result.script.segments.find((segment) => segment.type === 'COMMENT')?.text).toBe(source.comments[0]!.body);
+  expect(() => assertGroundedScript(result.script, longer)).not.toThrow();
 });
 
 it.each(['PARAPHRASE', 'ORIGINAL_COMMENTARY'] as const)('rejects invented comments disguised as %s', async (narrationType) => {

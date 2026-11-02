@@ -1,0 +1,6 @@
+# Isolate from system Python. Model weights are cached under .data/tts-vieneu/hf.
+vieneu==3.8.3
+# Multilingual forced alignment; CPU int8, no PyTorch/CUDA dependency.
+faster-whisper==1.2.1
+ctranslate2==4.8.4
+librosa==0.11.0

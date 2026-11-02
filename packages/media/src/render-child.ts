@@ -1,6 +1,9 @@
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:net';
 import { spawnSync } from 'node:child_process';
+import { writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import path from 'node:path';
 import process from 'node:process';
 import { bundle } from '@remotion/bundler';
 import { RenderInternals, makeCancelSignal, openBrowser, renderMedia, selectComposition, type RemotionServer } from '@remotion/renderer';
@@ -112,15 +115,34 @@ process.on('message', (raw: unknown) => {
       // Remotion binds IPv4 but advertises localhost, which can reach another app on IPv6.
       // Its port=0 reports zero, so hand it a port allocated by the OS instead.
       const serveUrl = new URL(ownedServer.serveUrl); serveUrl.hostname = '127.0.0.1';
+      const audioSources = { ...inputProps.audioSources };
+      for (const [assetId, source] of Object.entries(audioSources)) {
+        if (!source.startsWith('data:audio/wav;base64,')) continue;
+        cancelled();
+        const bytes = Buffer.from(source.slice('data:audio/wav;base64,'.length), 'base64');
+        const filename = `narration-${createHash('sha256').update(bytes).digest('hex')}.wav`;
+        await writeFile(path.join(bundleDirectory, filename), bytes, { mode: 0o600 });
+        audioSources[assetId] = `${serveUrl.origin}/${filename}`;
+      }
+      const sourceImageSources = { ...inputProps.sourceImageSources };
+      for (const [assetId, source] of Object.entries(sourceImageSources)) {
+        if (!source.startsWith('data:image/png;base64,')) throw new Error('SOURCE_IMAGE_FORMAT_INVALID');
+        cancelled();
+        const bytes = Buffer.from(source.slice('data:image/png;base64,'.length), 'base64');
+        const filename = `source-${createHash('sha256').update(bytes).digest('hex')}.png`;
+        await writeFile(path.join(bundleDirectory, filename), bytes, { mode: 0o600 });
+        sourceImageSources[assetId] = `${serveUrl.origin}/${filename}`;
+      }
+      const renderInput = { ...inputProps, audioSources, ...(inputProps.sourceImageSources ? { sourceImageSources } : {}) };
       cancelled();
       const browserExecutable = process.env.REMOTION_BROWSER_EXECUTABLE || undefined;
       const ownedBrowser = await retainResource(openBrowser('chrome', { browserExecutable, logLevel: 'error' }), (resource) => { browser = resource; });
       cancelled();
-      const composition = await selectComposition({ serveUrl: serveUrl.origin, id: 'ShortVideo', inputProps, puppeteerInstance: ownedBrowser, browserExecutable });
+      const composition = await selectComposition({ serveUrl: serveUrl.origin, id: 'ShortVideo', inputProps: renderInput, puppeteerInstance: ownedBrowser, browserExecutable });
       cancelled();
       await renderMedia({
         composition, serveUrl: serveUrl.origin, codec: 'h264', audioCodec: 'aac', pixelFormat: 'yuv420p', outputLocation,
-        inputProps, concurrency: Math.max(1, Number(process.env.MEDIA_RENDER_CONCURRENCY ?? 2)),
+        inputProps: renderInput, concurrency: Math.max(1, Number(process.env.MEDIA_RENDER_CONCURRENCY ?? 2)),
         browserExecutable, puppeteerInstance: ownedBrowser, cancelSignal: cancellation.cancelSignal,
         crf: 23, logLevel: 'error',
         onProgress: (value) => { if (process.connected) process.send?.({ type: 'progress', progress: value.progress, renderedFrames: value.renderedFrames, totalFrames: composition.durationInFrames }); },

@@ -1,5 +1,6 @@
 import type { DiscoveryQuery, NormalizedComment, NormalizedPost, SourceAccessStatus, SourceAdapter, SourceCapability, SourcePlatform } from '@shorts-factory/shared';
 import { z } from 'zod';
+export * from './local-capture.js';
 
 export { detectSensitiveFlags, scoreContent, scoreWeights } from './scoring.js';
 export type { ContentScore, ScoreFactors } from './scoring.js';

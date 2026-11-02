@@ -3,6 +3,8 @@
 ## Data collection policy
 Use official, approved APIs or permissioned content feeds. Manual import accepts user-owned/licensed material. Public visibility alone does not establish commercial reuse rights. Do not implement automated session-cookie extraction, rotating accounts, CAPTCHA bypass, stealth scraping or unrestricted Facebook Group crawling.
 
+Owner-approved local exception (2026-11-02): a user may explicitly open a dedicated visible browser, log in themselves, and request a bounded capture of one Facebook/Threads post and its loaded comments. This adapter is disabled in production, never reads a normal browser profile or extracts its cookies, and does not bypass login, platform limits or group access controls. Store source screenshots with provenance and variants; default rights UNKNOWN/PENDING until explicit review. This does not enable unattended discovery or publishing. See [local capture](16-LOCAL-EXPORT.md) and [source evaluation](research/VIDEO_READER_REFERENCES.md).
+
 ## Source priorities
 1. `manual` paste/JSON/CSV: supported fully in MVP; provenance/rights attestation required.
 2. `threads`: scoped approved Meta keyword search where app permission and API capability exist. Do not promise full historical/search/comment coverage; gate by capability.

@@ -5,9 +5,11 @@ import path from 'node:path';
 import { Prisma, PrismaClient, type ContentRight, type ProductionRun, type StoryProject, type StoryVersion } from '@shorts-factory/database';
 import { jobEnvelopeSchema } from '@shorts-factory/shared';
 import { LocalObjectStore, assertGroundedScript, audioCacheKey, createRenderManifest, createScriptProvider, createTtsProvider, generateSubtitleTrack, listVoiceProfiles, productionInputSchema, renderManifestSchema, renderVideo, storyScriptSchema, type CompositionInput, type ProductionInput, type ScriptSource, type StoryScript } from '@shorts-factory/media';
+import { sourceImageMetadataSchema, assertSourceImageBindings } from '@shorts-factory/media';
 import { z } from 'zod';
 import type { MediaWorkerConfig } from './config.js';
 import type { MediaEnvelope } from './outbox.js';
+import { customVoiceProfile, LocalNarrationProcessor, narrationDurationPlan, voicePreviewText, waveDurationMs } from '@shorts-factory/media';
 
 const noopOutputSchema = z.object({ ok: z.literal(true) }).strict();
 const audioOutputSchema = z.object({ ok: z.literal(true), audioAssetIds: z.array(z.string().uuid()).min(1).max(30) }).strict();
@@ -15,7 +17,9 @@ const versionOutputSchema = z.object({ versionId: z.string().uuid() }).strict();
 const scriptOutputSchema = z.object({ script: storyScriptSchema, provider: z.string(), modelVersion: z.string() }).strict();
 const manifestOutputSchema = z.object({ manifestId: z.string().uuid(), videoId: z.string().uuid() }).strict();
 const videoOutputSchema = z.object({ videoId: z.string().uuid(), mediaAssetId: z.string().uuid() }).strict();
-const alignmentOutputSchema = z.object({ timingPrecision: z.enum(['PROVIDER', 'APPROXIMATE']), segments: z.array(z.object({ segmentId: z.string(), startMs: z.number().int().nonnegative(), endMs: z.number().int().positive() }).strict()) }).strict();
+const wordTimingSchema = z.object({ text: z.string(), startMs: z.number().int().nonnegative(), endMs: z.number().int().positive() }).strict();
+const alignmentOutputSchema = z.object({ timingPrecision: z.enum(['PROVIDER', 'APPROXIMATE']), provider: z.string().optional(), adjustedWords: z.number().int().nonnegative().optional(), segments: z.array(z.object({ segmentId: z.string(), startMs: z.number().int().nonnegative(), endMs: z.number().int().positive(), providerTimings: z.array(wordTimingSchema).optional() }).strict()) }).strict();
+const durationOutputSchema = audioOutputSchema.extend({ targetDurationSec: z.number(), originalDurationMs: z.number(), durationMs: z.number(), tempo: z.number() });
 const assetPreparationOutputSchema = z.object({ mediaAssetIds: z.array(z.string().uuid()), ready: z.literal(true) }).strict();
 const mediaValidationOutputSchema = videoOutputSchema.extend({ width: z.literal(1080), height: z.literal(1920), fps: z.literal(30), codec: z.literal('h264'), audioCodec: z.literal('aac') }).strict();
 const storageUploadOutputSchema = videoOutputSchema.extend({ checksum: z.string().regex(/^[a-f0-9]{64}$/), sizeBytes: z.number().int().positive() }).strict();
@@ -24,7 +28,7 @@ const productionRequestVersionSchema = z.object({ version: z.number().int().posi
 type RunWithStory = ProductionRun & {
   story: StoryProject & {
     post: {
-      id: string; platform: string; title: string | null; body: string; authorAlias: string | null; deletedAt: Date | null; sensitiveFlags: string[];
+      id: string; platform: string; title: string | null; body: string; authorAlias: string | null; deletedAt: Date | null; sensitiveFlags: string[]; rawPayload?: Prisma.JsonValue;
       comments: Array<{ id: string; body: string; sensitiveFlags: string[]; likes: number | null }>;
       rights: ContentRight[];
     };
@@ -67,7 +71,7 @@ export function assertAutomationMediaPermission(input: AutomationMediaPermission
 
 export class MediaProductionPipeline {
   private readonly store: LocalObjectStore;
-  constructor(readonly db: PrismaClient, readonly config: MediaWorkerConfig) { this.store = new LocalObjectStore(path.resolve(config.STORAGE_LOCAL_ROOT)); }
+  constructor(readonly db: PrismaClient, readonly config: MediaWorkerConfig, private readonly renderer: import('@shorts-factory/media').VideoRenderProvider = { id: 'remotion-local', render: renderVideo }) { this.store = new LocalObjectStore(path.resolve(config.STORAGE_LOCAL_ROOT)); }
 
   async process(raw: unknown, attemptsMade = 0, maxAttempts = this.config.MEDIA_RETRY_ATTEMPTS): Promise<void> {
     const job = jobEnvelopeSchema.parse(raw) as MediaEnvelope;
@@ -133,7 +137,7 @@ export class MediaProductionPipeline {
       const blocked = isBlocked(code);
       const paused = code === 'AUTOMATION_PAUSED';
       const cancelled = code === 'AUTOMATION_CANCELLED' || code === 'USER_CANCELLED';
-      const terminal = !paused && (claimedRun.attempts >= attemptLimit || attemptsMade + 1 >= maxAttempts);
+      const terminal = !paused && (['DURATION_TARGET_UNREACHABLE', 'SCRIPT_SENTENCE_TOO_LONG'].includes(code) || claimedRun.attempts >= attemptLimit || attemptsMade + 1 >= maxAttempts);
       const now = new Date();
       const status = cancelled ? 'CANCELLED' : blocked ? (code === 'BLOCKED_EXTERNAL' || code === 'PAID_PROVIDER_BUDGET_UNBOUNDED' ? 'BLOCKED_EXTERNAL' : 'BLOCKED_RIGHTS') : terminal ? 'FAILED_PERMANENT' : 'FAILED_RETRYABLE';
       await this.db.$transaction(async (tx) => {
@@ -196,10 +200,13 @@ export class MediaProductionPipeline {
 
   private source(run: RunWithStory, input: ProductionInput): ScriptSource {
     const post = run.story.post;
-    const selected = new Set(input.commentIds);
-    const comments = post.comments.filter((comment) => selected.has(comment.id));
-    if (comments.length !== selected.size) throw new Error('COMMENT_NOT_IN_SOURCE');
-    return { id: post.id, platform: safePlatform(post.platform), title: post.title, body: post.body, comments: comments.map((comment) => ({ id: comment.id, body: comment.body })) };
+    const byId = new Map(post.comments.map((comment) => [comment.id, comment]));
+    const comments = [...new Set(input.commentIds)].map((id) => {
+      const comment = byId.get(id);
+      if (!comment) throw new Error('COMMENT_NOT_IN_SOURCE');
+      return { id: comment.id, body: comment.body };
+    });
+    return { id: post.id, platform: safePlatform(post.platform), title: post.title, body: post.body, comments };
   }
 
   private assertRights(run: RunWithStory, input: ProductionInput) {
@@ -245,9 +252,10 @@ export class MediaProductionPipeline {
 
   private async execute(run: RunWithStory, input: ProductionInput) {
     await this.assertRights(run, input);
+    await this.sourceImages(run, input);
     const source = this.source(run, input);
     let version: StoryVersion;
-    if (input.mode === 'CREATE' || input.mode === 'REGENERATE') version = await this.generateVersion(run, input, source);
+    if (input.mode === 'CREATE' || input.mode === 'REGENERATE' || input.mode === 'SCRIPT_ONLY') version = await this.generateVersion(run, input, source);
     else version = await this.loadVersion(run.workspaceId, run.story.id, input.storyVersionId);
 
     const script = storyScriptSchema.parse(version.script);
@@ -255,7 +263,16 @@ export class MediaProductionPipeline {
       assertGroundedScript(script, source);
       return { ok: true };
     });
-    const audio = await this.generateAudio(run, input, version, script);
+    if (input.mode === 'SCRIPT_ONLY') {
+      await this.db.$transaction(async (tx) => {
+        await this.assertRunActive(tx, run, input);
+        await tx.storyProject.updateMany({ where: { id: run.story.id, workspaceId: run.workspaceId }, data: { status: 'SCRIPT_READY' } });
+        await tx.productionRun.updateMany({ where: { id: run.id, workspaceId: run.workspaceId }, data: { status: 'SUCCEEDED', currentStage: 'SCRIPT_READY', completedAt: new Date() } });
+        await tx.renderJob.updateMany({ where: { workspaceId: run.workspaceId, productionRunId: run.id }, data: { status: 'SUCCEEDED', progress: 1, completedAt: new Date() } });
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      return;
+    }
+    let audio = await this.generateAudio(run, input, version, script);
     if (input.mode === 'AUDIO_ONLY') {
       await this.db.$transaction(async (tx) => {
         await this.assertRunActive(tx, run, input);
@@ -265,10 +282,11 @@ export class MediaProductionPipeline {
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
       return;
     }
+    if (input.audioTimed) audio = await this.fitAudioDuration(run, input, version, script, audio);
     await this.prepareAssets(run, input, script, audio);
     const alignment = await this.alignAudio(run, input, script, audio);
     await this.createSubtitles(run, input, version, script, alignment);
-    const manifest = await this.createManifest(run, input, version, script, audio);
+    const manifest = await this.createManifest(run, input, version, script, audio, alignment);
     const rendered = await this.render(run, input, manifest, audio);
     await this.validateMedia(run, input, rendered);
     await this.confirmStoredMedia(run, input, rendered);
@@ -290,6 +308,16 @@ export class MediaProductionPipeline {
   }
 
   private async generateVersion(run: RunWithStory, input: ProductionInput, source: ScriptSource) {
+    let narrationWordsPerSecond: number | undefined;
+    if (input.audioTimed && input.voiceProfileId.startsWith('vieneu:') && (process.env.SCRIPT_PROVIDER ?? 'mock') === 'mock') {
+      const calibration = await this.stage(run, 'SPEECH_CALIBRATION', z.object({ wordsPerSecond: z.number().positive().max(20) }).strict(), async () => {
+        const speech = await this.speechContext(run, input);
+        await this.assertAutomationAction(run, false);
+        const result = await speech.provider.synthesize({ text: voicePreviewText, language: input.language, voiceId: input.voiceId, speakingRate: input.speakingRate, ...speech.reference });
+        return { wordsPerSecond: voicePreviewText.split(/\s+/u).length / (result.durationMs / 1000) };
+      });
+      narrationWordsPerSecond = calibration.wordsPerSecond;
+    }
     const generated = await this.stage(run, 'SCRIPT_GENERATION', scriptOutputSchema, async () => {
       if (input.candidateId) {
         const candidate = await this.db.contentCandidate.findFirst({ where: { id: input.candidateId, workspaceId: run.workspaceId }, select: { status: true } });
@@ -297,7 +325,7 @@ export class MediaProductionPipeline {
       }
       const provider = createScriptProvider();
       await this.assertAutomationAction(run, !provider.id.includes('mock'));
-      const result = await provider.generate({ source, language: input.language, targetDurationSec: input.targetDurationSec, style: input.style });
+      const result = await provider.generate({ source, language: input.language, targetDurationSec: input.targetDurationSec, style: input.style, ...(narrationWordsPerSecond ? { narrationWordsPerSecond } : {}) });
       assertGroundedScript(result.script, source);
       return { script: result.script, provider: result.provider, modelVersion: result.modelVersion };
     });
@@ -325,7 +353,7 @@ export class MediaProductionPipeline {
 
   private async generateAudio(run: RunWithStory, input: ProductionInput, version: StoryVersion, script: StoryScript) {
     const selectedSegmentIds = input.selectedSegmentIds.length ? new Set(input.selectedSegmentIds) : null;
-    const segments = script.segments.filter((segment) => !selectedSegmentIds || selectedSegmentIds.has(segment.id));
+    const segments = input.mode === 'AUDIO_ONLY' && input.preview ? [{ id: 'voice-preview', text: voicePreviewText }] : script.segments.filter((segment) => !selectedSegmentIds || selectedSegmentIds.has(segment.id));
     if (!segments.length) throw new Error('AUDIO_SEGMENTS_REQUIRED');
     const previous = await this.db.productionStage.findUnique({ where: { workspaceId_productionRunId_name: { workspaceId: run.workspaceId, productionRunId: run.id, name: 'TTS_GENERATION' } } });
     if (previous?.status === 'SUCCEEDED' && !audioOutputSchema.safeParse(previous.output).success) {
@@ -353,15 +381,14 @@ export class MediaProductionPipeline {
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     }
     const output = await this.stage(run, 'TTS_GENERATION', audioOutputSchema, async () => {
-      const provider = createTtsProvider();
-      const profile = listVoiceProfiles().find((item) => item.id === input.voiceProfileId);
-      if (!profile || profile.voiceId !== input.voiceId) throw new Error('VOICE_PROFILE_INVALID');
+      const { provider, profile, reference } = await this.speechContext(run, input);
       const audioAssetIds: string[] = [];
       for (const segment of segments) {
-        const synthesisInput = { text: segment.text, language: script.language, voiceId: input.voiceId, speakingRate: input.speakingRate };
+        const synthesisInput = { text: segment.text, language: script.language, voiceId: input.voiceId, speakingRate: input.speakingRate, ...reference };
         const cacheKey = createHash('sha256').update(JSON.stringify([version.id, segment.id, audioCacheKey(synthesisInput, provider.id)])).digest('hex');
         const cached = await this.db.audioAsset.findFirst({ where: { workspaceId: run.workspaceId, cacheKey } });
         if (cached) { audioAssetIds.push(cached.id); continue; }
+        await this.db.$transaction((tx) => this.assertRunActive(tx, run, input), { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
         await this.assertAutomationAction(run, !provider.id.includes('mock') && !provider.id.includes('local'));
         const result = await provider.synthesize(synthesisInput);
         const object = await this.store.put(run.workspaceId, result.audio);
@@ -400,12 +427,61 @@ export class MediaProductionPipeline {
     return selected;
   }
 
+  private async speechContext(run: RunWithStory, input: ProductionInput) {
+    // Preserve queued eSpeak jobs when the local launcher switches to neural speech.
+    const env = process.env.TTS_PROVIDER === 'vieneu' && input.voiceProfileId.startsWith('local:') ? { ...process.env, TTS_PROVIDER: 'local' } : process.env;
+    const provider = createTtsProvider(env);
+    const asset = input.voiceProfileId.startsWith('vieneu:custom:') && env.TTS_PROVIDER === 'vieneu' ? await this.db.mediaAsset.findFirst({ where: { workspaceId: run.workspaceId, id: input.voiceId, kind: 'VOICE_REFERENCE' } }) : null;
+    const profile = asset ? customVoiceProfile(asset) : listVoiceProfiles(env).find((item) => item.id === input.voiceProfileId);
+    if (!profile || profile.voiceId !== input.voiceId) throw new Error('VOICE_PROFILE_INVALID');
+    const reference = asset ? { referenceAudio: await this.store.get(run.workspaceId, asset.checksum) } : {};
+    return { provider, profile, reference };
+  }
+
+  private async fitAudioDuration(run: RunWithStory, input: ProductionInput, version: StoryVersion, script: StoryScript, audio: SelectedAudio[]) {
+    const output = await this.stage(run, 'DURATION_FIT', durationOutputSchema, async () => {
+      const plan = narrationDurationPlan(audio.map((item) => item.durationMs), input.targetDurationSec);
+      const processor = new LocalNarrationProcessor();
+      const audioAssetIds: string[] = [];
+      let totalMs = (audio.length - 1) * 100;
+      for (const [index, item] of audio.entries()) {
+        const duration = plan.targetDurationsMs[index]!;
+        const cacheKey = createHash('sha256').update(JSON.stringify(['duration-fit-v1', item.cacheKey, duration])).digest('hex');
+        const cached = await this.db.audioAsset.findFirst({ where: { workspaceId: run.workspaceId, cacheKey } });
+        if (cached) { audioAssetIds.push(cached.id); totalMs += cached.durationMs; continue; }
+        await this.db.$transaction((tx) => this.assertRunActive(tx, run, input), { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+        const bytes = await processor.retime(await this.store.get(run.workspaceId, item.mediaAsset.checksum), duration);
+        const durationMs = waveDurationMs(bytes);
+        if (Math.abs(durationMs - duration) > 50) throw new Error('AUDIO_RETIME_INVALID');
+        const object = await this.store.put(run.workspaceId, bytes);
+        const id = await this.db.$transaction(async (tx) => {
+          await this.assertRunActive(tx, run, input);
+          const existing = await tx.audioAsset.findFirst({ where: { workspaceId: run.workspaceId, cacheKey } });
+          if (existing) return existing.id;
+          const media = await tx.mediaAsset.upsert({ where: { workspaceId_storageKey: { workspaceId: run.workspaceId, storageKey: object.storageKey } }, create: { workspaceId: run.workspaceId, kind: 'AUDIO', storageKey: object.storageKey, checksum: object.checksum, mimeType: 'audio/wav', metadata: { provider: 'local-librosa-tempo-v1', durationMs, tempo: plan.tempo, originalAudioAssetId: item.id } }, update: {} });
+          return (await tx.audioAsset.create({ data: { workspaceId: run.workspaceId, storyVersionId: version.id, mediaAssetId: media.id, segmentId: item.segmentId, voiceProfileId: item.voiceProfileId, provider: item.provider, cacheKey, durationMs, timingPrecision: 'APPROXIMATE', usageUnits: 0, estimatedCostUsd: 0 } })).id;
+        }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+        audioAssetIds.push(id); totalMs += durationMs;
+      }
+      if (Math.abs(totalMs - input.targetDurationSec * 1000) > 100) throw new Error('AUDIO_RETIME_INVALID');
+      return { ok: true, audioAssetIds, targetDurationSec: input.targetDurationSec, originalDurationMs: plan.originalDurationMs, durationMs: totalMs, tempo: plan.tempo };
+    });
+    const rows = await this.db.audioAsset.findMany({ where: { workspaceId: run.workspaceId, storyVersionId: version.id, id: { in: output.audioAssetIds } }, include: { mediaAsset: true } });
+    const selected = output.audioAssetIds.map((id, index) => {
+      const row = rows.find((item) => item.id === id && item.segmentId === script.segments[index]?.id);
+      if (!row) throw new Error('AUDIO_ASSET_MISSING');
+      return row;
+    });
+    if (selected.length !== script.segments.length) throw new Error('AUDIO_ASSET_MISSING');
+    return selected;
+  }
+
   private async createSubtitles(run: RunWithStory, input: ProductionInput, version: StoryVersion, script: StoryScript, alignment: z.infer<typeof alignmentOutputSchema>) {
     await this.stage(run, 'SUBTITLE_GENERATION', noopOutputSchema, async () => {
       const timeline = alignment.segments.map((item) => {
         const segment = script.segments.find((candidate) => candidate.id === item.segmentId);
         if (!segment) throw new Error('AUDIO_ASSET_MISSING');
-        return { segment, startMs: item.startMs, endMs: item.endMs };
+        return { segment, startMs: item.startMs, endMs: item.endMs, providerTimings: item.providerTimings };
       });
       const subtitle = generateSubtitleTrack(timeline, input.subtitlePreset);
       await this.db.$transaction(async (tx) => {
@@ -424,16 +500,30 @@ export class MediaProductionPipeline {
     return this.stage(run, 'AUDIO_ALIGNMENT', alignmentOutputSchema, async () => {
       const bySegment = new Map(audio.map((item) => [item.segmentId, item]));
       let cursorMs = 0;
-      const segments = script.segments.map((segment) => {
-        const item = bySegment.get(segment.id);
-        if (!item) throw new Error('AUDIO_ASSET_MISSING');
-        const startMs = cursorMs;
-        const endMs = startMs + item.durationMs;
-        cursorMs = endMs + 100;
-        return { segmentId: segment.id, startMs, endMs };
-      });
+      const segments: z.infer<typeof alignmentOutputSchema>['segments'] = [];
+      let provider: string | undefined;
+      let adjustedWords = 0;
+      const processor = new LocalNarrationProcessor();
+      try {
+        for (const segment of script.segments) {
+          const item = bySegment.get(segment.id);
+          if (!item) throw new Error('AUDIO_ASSET_MISSING');
+          const startMs = cursorMs;
+          const endMs = startMs + item.durationMs;
+          cursorMs = endMs + 100;
+          let providerTimings: z.infer<typeof wordTimingSchema>[] | undefined;
+          if (input.audioTimed) {
+            await this.db.$transaction((tx) => this.assertRunActive(tx, run, input), { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+            const aligned = await processor.align(await this.store.get(run.workspaceId, item.mediaAsset.checksum), segment.text, script.language, item.durationMs);
+            provider = aligned.provider;
+            adjustedWords += aligned.adjustedWords ?? 0;
+            providerTimings = aligned.words.map((word) => ({ ...word, startMs: word.startMs + startMs, endMs: word.endMs + startMs }));
+          }
+          segments.push({ segmentId: segment.id, startMs, endMs, ...(providerTimings ? { providerTimings } : {}) });
+        }
+      } finally { if (input.audioTimed) await processor.release(); }
       await this.db.$transaction((tx) => this.assertRunActive(tx, run, input), { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
-      return { timingPrecision: audio.length > 0 && audio.every((item) => item.timingPrecision === 'PROVIDER') ? 'PROVIDER' as const : 'APPROXIMATE' as const, segments };
+      return { timingPrecision: input.audioTimed ? 'PROVIDER' as const : 'APPROXIMATE' as const, ...(provider ? { provider, adjustedWords } : {}), segments };
     });
   }
 
@@ -448,6 +538,22 @@ export class MediaProductionPipeline {
       await this.db.$transaction((tx) => this.assertRunActive(tx, run, input), { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
       return { mediaAssetIds: assets.map((asset) => asset.id), ready: true };
     });
+  }
+
+  private async sourceImages(run: RunWithStory, input: ProductionInput): Promise<Record<string, string>> {
+    const provenance = run.story.post.rawPayload;
+    const captureRunId = provenance && typeof provenance === 'object' && !Array.isArray(provenance) ? provenance.captureRunId : undefined;
+    if (typeof captureRunId === 'string' && !input.sourceImages) throw new Error('SOURCE_IMAGE_MISSING');
+    assertSourceImageBindings(input, run.story.post.id);
+    const sources: Record<string, string> = {};
+    for (const binding of input.sourceImages ?? []) {
+      const asset = await this.db.mediaAsset.findFirst({ where: { id: binding.assetId, workspaceId: run.workspaceId, kind: 'SOURCE_CAPTURE', checksum: binding.checksum } });
+      const parsed = sourceImageMetadataSchema.safeParse(asset?.metadata);
+      const text = binding.sourceRef === `post:${run.story.post.id}` ? run.story.post.body : run.story.post.comments.find(comment => `comment:${comment.id}` === binding.sourceRef)?.body;
+      if (!asset || !parsed.success || !text || parsed.data.postId !== run.story.post.id || parsed.data.captureRunId !== captureRunId || parsed.data.sourceRef !== binding.sourceRef || parsed.data.variant !== (binding.anonymized ? 'ANONYMIZED' : 'ORIGINAL') || parsed.data.width !== binding.width || parsed.data.height !== binding.height || parsed.data.textHash !== createHash('sha256').update(text).digest('hex')) throw new Error('SOURCE_IMAGE_IDENTITY_CONFLICT');
+      sources[binding.assetId] = `data:image/png;base64,${(await this.store.get(run.workspaceId, binding.checksum)).toString('base64')}`;
+    }
+    return sources;
   }
 
   private async validateMedia(run: RunWithStory, input: ProductionInput, rendered: z.infer<typeof videoOutputSchema>) {
@@ -474,7 +580,7 @@ export class MediaProductionPipeline {
     });
   }
 
-  private async createManifest(run: RunWithStory, input: ProductionInput, version: StoryVersion, script: StoryScript, audio: SelectedAudio[]) {
+  private async createManifest(run: RunWithStory, input: ProductionInput, version: StoryVersion, script: StoryScript, audio: SelectedAudio[], alignment: z.infer<typeof alignmentOutputSchema>) {
     const existingStage = await this.db.productionStage.findUnique({ where: { workspaceId_productionRunId_name: { workspaceId: run.workspaceId, productionRunId: run.id, name: 'MANIFEST_CREATION' } } });
     if (existingStage?.status === 'SUCCEEDED') return manifestOutputSchema.parse(existingStage.output);
     const existing = await this.db.renderManifest.findFirst({ where: { workspaceId: run.workspaceId, productionRunId: run.id, version: 1 } });
@@ -482,13 +588,15 @@ export class MediaProductionPipeline {
     const audioItems = script.segments.map((segment) => {
       const item = bySegment.get(segment.id);
       if (!item) throw new Error('AUDIO_ASSET_MISSING');
-      return { assetId: item.mediaAsset.id, segmentId: segment.id, durationMs: item.durationMs };
+      const timing = alignment.segments.find((entry) => entry.segmentId === segment.id);
+      return { assetId: item.mediaAsset.id, segmentId: segment.id, durationMs: item.durationMs, ...(timing?.providerTimings ? { providerTimings: timing.providerTimings.map((word) => ({ ...word, startMs: word.startMs - timing.startMs, endMs: word.endMs - timing.startMs })) } : {}) };
     });
     const { manifest, checksum, subtitle } = createRenderManifest({
       storyProjectId: run.story.id, storyVersionId: version.id, storyVersion: version.version, sourcePostId: run.story.post.id,
       platform: safePlatform(run.story.post.platform), script, templateId: input.templateId, backgroundAssetId: input.backgroundAssetId,
       attribution: { required: run.story.post.rights[0]?.attributionRequired ?? false, text: run.story.post.rights[0]?.attributionText ?? null },
       visualSettings: { theme: input.theme, anonymizeAuthors: input.anonymizeAuthors, showEngagement: input.showEngagement }, audioAssets: audioItems, subtitlePreset: input.subtitlePreset,
+      ...(input.sourceImages ? { sourceImages: input.sourceImages } : {}),
     });
     if (existing && existing.checksum !== checksum) throw new Error('RENDER_MANIFEST_CONFLICT');
     const output = await this.stage(run, 'MANIFEST_CREATION', manifestOutputSchema, async () => {
@@ -531,6 +639,7 @@ export class MediaProductionPipeline {
       const compositionInput: CompositionInput = {
         manifest: manifestRecord.manifest as unknown as CompositionInput['manifest'],
         post: { title: run.story.post.title, body: run.story.post.body, authorAlias: run.story.post.authorAlias }, comments, backgroundSrc, audioSources,
+        ...(input.sourceImages ? { sourceImageSources: await this.sourceImages(run, input) } : {}),
       };
       const directory = await mkdtemp(path.join(os.tmpdir(), 'sf-render-'));
       const outputPath = path.join(directory, 'video.mp4');
@@ -540,7 +649,7 @@ export class MediaProductionPipeline {
         let lastProgressAt = 0;
         let pending = Promise.resolve();
         await this.assertAutomationAction(run, false);
-        const metadata = await renderVideo(compositionInput, outputPath, ({ progress }) => {
+        const metadata = await this.renderer.render(compositionInput, outputPath, ({ progress }) => {
           if (Date.now() - lastProgressAt < 1500 && progress < 0.99) return;
           lastProgressAt = Date.now();
           pending = pending.then(async () => {

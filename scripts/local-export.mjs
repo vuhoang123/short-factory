@@ -3,6 +3,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createConnection } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { randomBytes } from 'node:crypto';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 process.chdir(root);
@@ -11,8 +12,21 @@ process.loadEnvFile('.env');
 for (const name of ['DATABASE_URL', 'REDIS_URL']) if (!process.env[name]) throw new Error(`Missing ${name}.`);
 if (process.env.NODE_ENV === 'production') throw new Error('This launcher is for local development only.');
 
+const neuralPython = process.env.TTS_VIENEU_PYTHON ?? path.join(root, '.data', 'tts-vieneu', '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
+const speechProvider = process.env.LOCAL_TTS_PROVIDER ?? (existsSync(neuralPython) ? 'vieneu' : 'local');
+if (!['local', 'vieneu'].includes(speechProvider)) throw new Error('LOCAL_TTS_PROVIDER must be local or vieneu.');
 const environment = {
-  ...process.env, NODE_ENV: 'development', SCRIPT_PROVIDER: 'mock', TTS_PROVIDER: 'local',
+  ...process.env, NODE_ENV: 'development', SCRIPT_PROVIDER: 'mock', TTS_PROVIDER: speechProvider,
+  HF_HOME: path.join(root, '.data', 'tts-vieneu', 'hf'), HF_HUB_DISABLE_SYMLINKS_WARNING: '1',
+  PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8',
+  TTS_LOCAL_TOKEN: process.env.TTS_LOCAL_TOKEN ?? randomBytes(32).toString('hex'),
+  LOCAL_CAPTURE_ENABLED: process.env.LOCAL_CAPTURE_ENABLED || (existsSync(path.join(root, '.data', 'source-capture', 'engine.json')) ? '1' : '0'),
+  LOCAL_CAPTURE_TOKEN: randomBytes(32).toString('hex'),
+  LOCAL_CAPTURE_URL: 'http://127.0.0.1:3003',
+  TTS_LOCAL_URL: 'http://127.0.0.1:3002/speech', TTS_LOCAL_PORT: '3002',
+  LOCAL_ALIGNMENT_ENABLED: speechProvider === 'vieneu' ? '1' : '0',
+  MEDIA_RENDER_CONCURRENCY: process.env.MEDIA_RENDER_CONCURRENCY ?? '1',
+  TTS_VIENEU_VOICES_FILE: path.join(root, '.data', 'tts-vieneu', 'voices.json'),
   APP_URL: 'http://127.0.0.1:3000', API_URL: 'http://127.0.0.1:3001',
   API_HOST: '127.0.0.1', API_PORT: '3001', PORT: '3001',
   PUBLISHER_PROVIDER: 'mock', ANALYTICS_LIVE_ENABLED: 'false', NEXT_TELEMETRY_DISABLED: '1',
@@ -54,16 +68,37 @@ function stop(code) {
   }
   process.exitCode = code;
 }
-function launch(label, args, cwd = root) {
-  const child = spawn(process.execPath, args, { cwd, env: environment, windowsHide: true, stdio: 'inherit' });
+function launch(label, args, cwd = root, executable = process.execPath) {
+  const child = spawn(executable, args, { cwd, env: environment, windowsHide: true, stdio: 'inherit' });
   children.add(child);
   child.once('error', () => { console.error(`${label} could not start.`); stop(1); });
   child.once('exit', (code) => { children.delete(child); if (!stopping) { console.error(`${label} stopped (${code ?? 'signal'}).`); stop(code || 1); } });
 }
 process.once('SIGINT', () => stop(0));
 process.once('SIGTERM', () => stop(0));
+if (speechProvider === 'vieneu') {
+  if (!existsSync(neuralPython)) throw new Error('Run pnpm local:tts:setup first.');
+  launch('Local neural speech', [path.join(root, 'scripts', 'local-tts-server.py')], root, neuralPython);
+  let ready = false;
+  console.log('Loading Vietnamese neural speech locally; the first run downloads model weights.');
+  for (let attempt = 0; attempt < 300 && !stopping; attempt++) {
+    try { const response = await fetch('http://127.0.0.1:3002/health', { signal: AbortSignal.timeout(1000) }); if (response.ok) { ready = true; break; } } catch { /* Model startup is still in progress. */ }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  if (!ready) { stop(1); throw new Error('Local speech did not become ready. Check the installed model environment.'); }
+}
+if (environment.LOCAL_CAPTURE_ENABLED === '1') {
+  const capturePython = path.join(root, '.data', 'source-capture', '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
+  launch('Source capture', [path.join(root, 'scripts', 'local-capture-server.py')], root, capturePython);
+  let ready = false;
+  for (let attempt = 0; attempt < 30 && !stopping; attempt++) {
+    try { if ((await fetch('http://127.0.0.1:3003/health', { signal: AbortSignal.timeout(1000) })).ok) { ready = true; break; } } catch { /* Private capture process is starting. */ }
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+  if (!ready) { stop(1); throw new Error('Local capture did not start. Run local:capture:setup.'); }
+}
 launch('API', ['--import', 'tsx', 'apps/api/src/main.ts']);
 launch('Discovery worker', ['--import', 'tsx', 'workers/discovery/src/main.ts']);
 launch('Media worker', ['--import', 'tsx', 'workers/media/src/main.ts']);
 launch('Web', ['node_modules/next/dist/bin/next', 'dev', '--webpack', '--hostname', '127.0.0.1', '--port', '3000'], path.join(root, 'apps/web'));
-console.log('Local export: http://127.0.0.1:3000/export — local speech, deterministic script, no provider API calls. Ctrl+C stops application processes; database data is preserved.');
+console.log(`Local export: http://127.0.0.1:3000/studio — ${speechProvider} speech, deterministic script, no paid provider calls. Ctrl+C stops application processes; database data is preserved.`);

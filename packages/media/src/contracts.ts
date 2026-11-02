@@ -47,12 +47,24 @@ export const subtitlePresetSchema = z.enum(['ClassicCaption', 'KaraokeHighlight'
 export type SubtitleCue = z.infer<typeof subtitleCueSchema>;
 export type SubtitlePreset = z.infer<typeof subtitlePresetSchema>;
 
+export const sourceImageBindingSchema = z.object({
+  assetId: z.string().uuid(), sourceRef: z.string().regex(/^(post|comment):[a-f0-9-]{36}$/),
+  checksum: z.string().regex(/^[a-f0-9]{64}$/), width: z.number().int().min(80).max(40000), height: z.number().int().min(24).max(40000),
+  anonymized: z.boolean(),
+}).strict();
+export const sourceImageMetadataSchema = z.object({
+  postId: z.string().uuid(), captureRunId: z.string().uuid(), sourceRef: sourceImageBindingSchema.shape.sourceRef,
+  variant: z.enum(['ORIGINAL', 'ANONYMIZED']), textHash: z.string().regex(/^[a-f0-9]{64}$/),
+  width: sourceImageBindingSchema.shape.width, height: sourceImageBindingSchema.shape.height,
+}).strict();
+
 const frameSegmentSchema = z.object({
   id: z.string(), type: storySegmentTypeSchema, text: z.string(), sourceRefs: z.array(z.string()),
   narrationType: narrationTypeSchema, startFrame: z.number().int().nonnegative(), endFrame: z.number().int().positive(),
 }).strict().refine((segment) => segment.endFrame > segment.startFrame, 'Visual segment must have a positive duration.');
 
 export const renderManifestSchema = z.object({
+  sourceImages: z.array(sourceImageBindingSchema).max(11).optional(),
   version: z.literal(1),
   templateId: z.enum(['RedditStory', 'SocialCommentary']),
   templateVersion: z.number().int().positive(),
@@ -87,10 +99,13 @@ export const renderManifestSchema = z.object({
 export type RenderManifest = z.infer<typeof renderManifestSchema>;
 
 export const productionInputSchema = z.object({
-  mode: z.enum(['CREATE', 'REGENERATE', 'RENDER', 'AUDIO_ONLY']),
+  sourceImages: z.array(sourceImageBindingSchema).max(11).optional(),
+  audioTimed: z.literal(true).optional(),
+  preview: z.literal(true).optional(),
+  mode: z.enum(['CREATE', 'REGENERATE', 'RENDER', 'AUDIO_ONLY', 'SCRIPT_ONLY']),
   candidateId: z.string().uuid().nullable(),
   channelId: z.string().uuid(),
-  commentIds: z.array(z.string().uuid()).max(8),
+  commentIds: z.array(z.string().uuid()).max(10),
   language: z.string().min(2).max(20),
   targetDurationSec: z.number().int().min(10).max(120),
   style: z.enum(['STORYTELLING', 'SOCIAL_COMMENTARY']),
@@ -114,5 +129,6 @@ export const compositionInputSchema = z.object({
   comments: z.array(z.object({ id: z.string(), body: z.string(), authorAlias: z.string().nullable() }).strict()),
   backgroundSrc: z.string().nullable(),
   audioSources: z.record(z.string(), z.string()),
+  sourceImageSources: z.record(z.string(), z.string()).optional(),
 }).strict();
 export type CompositionInput = z.infer<typeof compositionInputSchema>;
