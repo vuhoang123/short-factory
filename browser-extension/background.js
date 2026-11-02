@@ -203,6 +203,7 @@ async function navigation(details) {
   if (!request || request.sourceTabId !== details.tabId || request.completed) return;
   let identity;
   try { identity = sourceIdentity(details.url); } catch {
+    if (details.url === 'about:blank') return;
     if (!request.resolvedIdentity && sourceIdentity(request.url).includes(':share:')) await save({ ...request, allowShareResolution: false });
     if (running) cancelled = true;
     return;

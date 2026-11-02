@@ -33,7 +33,7 @@ Waiting jobs expire after 30 minutes. Studio and extension cancellation close th
 
 - Chromium UI suite: 30/31 passed in the full run; the remaining existing Studio polling test timed out at `Opening your workspace…` and passed on an isolated rerun. All **31 cases** are verified, including the four new current-browser paths. The transient hydration delay was not reproduced in the isolated check.
 - `node scripts/test-capture-extension.mjs`: **passed with the unchanged production extension manifest** in a fresh Chromium profile. It opened the bound source tab, read the owned synthetic DOM, captured 1 post + 5 comments / 12 actual PNGs, sorted reacts `[90,70,50,30,10]`, acknowledged all image/result messages, restored viewport, detached its debugger, and made zero external network requests. Evidence: `test-results/current-browser-extension/evidence.json` and image/result files.
-- `pnpm lint` and root/API/web/discovery TypeScript checks passed. Build results are recorded after the final build below.
+- `pnpm lint` and root/API/web/discovery TypeScript checks passed. `pnpm exec turbo run build --force`: **13/13 successful**, no cached tasks.
 
 The browser extension test exercises real extension capture/bridge behavior with a synthetic Studio receiver. Separate API/DB tests validate upload persistence, idempotency, authorization and durable enqueue. It does not claim a real Facebook account or a full real-service capture-to-video run; the unchanged screenshot renderer has its prior real MP4 evidence.
 
