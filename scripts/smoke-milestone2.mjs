@@ -6,6 +6,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createServer as createHttpServer } from 'node:http';
 import { createServer } from 'node:net';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 
 if (process.env.NODE_ENV === 'production') throw new Error('Smoke is disabled in production.');
 const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -13,10 +14,12 @@ if (!databaseUrl || !new URL(databaseUrl).pathname.endsWith('_test') || !process
 const root = process.cwd();
 const namespace = randomUUID();
 const sourceCapture = process.argv.includes('--source-capture');
+const studioMedia = process.argv.includes('--studio-media');
+assert(!studioMedia || sourceCapture, 'Studio media smoke uses the original screenshot fixture.');
 const targetArgument = process.argv.find((value) => value.startsWith('--targets='));
 const targets = targetArgument ? targetArgument.slice('--targets='.length).split(',').map(Number) : [40, 60, 120];
 assert(targets.length > 0 && targets.every((value) => (sourceCapture ? [25, 40, 60, 120] : [40, 60, 120]).includes(value)), 'Use supported target durations; source screenshot fixture also supports 25 seconds.');
-const directory = path.join(root, 'test-results', sourceCapture ? 'source-video' : 'milestone-2');
+const directory = path.join(root, 'test-results', studioMedia ? 'studio-maker' : sourceCapture ? 'source-video' : 'milestone-2');
 await mkdir(directory, { recursive: true });
 async function freePort() {
   const probe = createServer();
@@ -149,6 +152,35 @@ try {
   for (let attempt = 0; attempt < 60; attempt++) { candidate = (await api(`/candidates?sourcePostId=${imported.postId}&limit=1`)).items[0]; if (candidate) break; await sleep(500); }
   assert(candidate); await api(`/candidates/${candidate.id}/review`, { decision: 'APPROVED' });
   const profile = (await api('/voice-profiles')).items[0]; assert.equal(profile.provider, 'vieneu');
+  let mediaOptions = {};
+  if (studioMedia) {
+    const { RenderInternals } = createRequire(new URL('../packages/media/package.json', import.meta.url))('@remotion/renderer');
+    const ffmpeg = RenderInternals.getExecutablePath({ type: 'ffmpeg', logLevel: 'error', indent: false, binariesDirectory: null });
+    const generated = spawnSync(python, ['-c', `import subprocess, pathlib, wave, math, struct, sys, random
+from PIL import Image, ImageChops
+out=pathlib.Path(sys.argv[1])
+base=Image.frombytes('RGB',(720,1280),random.Random(7).randbytes(720*1280*3))
+for n in range(10): ImageChops.offset(base,n*16,n*8).save(out/('frame-%02d.png'%n))
+result=subprocess.run([sys.argv[2], '-y', '-framerate', '5', '-i', str(out/'frame-%02d.png'), '-t', '2', '-r', '30', '-c:v', 'libx264', '-crf', '28', '-pix_fmt', 'yuv420p', '-an', str(out/'background.mp4')], capture_output=True, timeout=30)
+if result.returncode: print(result.stderr.decode(errors='replace')[-2500:],file=sys.stderr); sys.exit(1)
+for p in out.glob('frame-*.png'): p.unlink()
+with wave.open(str(out/'music.wav'),'wb') as track:
+ track.setparams((1,2,16000,0,'NONE','not compressed'))
+ track.writeframes(b''.join(struct.pack('<h',int(math.sin(i*2*math.pi*880/16000)*5000)) for i in range(16000)))
+`, directory, ffmpeg], { cwd: root, windowsHide: true, encoding: 'utf8', timeout: 45000 });
+    assert.equal(generated.status, 0, generated.stderr);
+    async function upload(route, filename, type) {
+      const data = await readFile(path.join(directory, filename));
+      if (type === 'video/mp4') assert(data.length > 100_000, 'Exercise real OffthreadVideo URLs larger than HTTP headers.');
+      const response = await fetch(`${origin}/api/v1${route}`, { method: 'POST', headers: { Origin: origin, Cookie: cookie, 'Content-Type': type, 'Idempotency-Key': randomUUID(), 'X-Asset-Encoding': 'uri', 'X-Asset-Name': filename, 'X-Rights-Basis': 'OWNED', 'X-Rights-Attested': 'true' }, body: data, signal: AbortSignal.timeout(30000) });
+      assert(response.ok, `Media upload ${route}: ${response.status}`); return response.json();
+    }
+    const background = await upload('/backgrounds', 'background.mp4', 'video/mp4');
+    const music = await upload('/music', 'music.wav', 'audio/wav');
+    mediaOptions = { backgroundAssetId: background.id, mediaSettings: { musicAssetId: music.id, musicVolume: 0.2, ducking: true, backgroundStartSec: 0.5, captionSize: 52, captionColor: '#ffffff', captionPosition: 'BOTTOM' } };
+    const preset = await api('/studio-presets', { name: 'Owned local media smoke', settings: { voiceProfileId: profile.id, ...mediaOptions } });
+    assert.equal(preset.settings.mediaSettings.musicAssetId, music.id);
+  }
   const evidence = [];
   for (const targetDurationSec of targets) {
     const draft = await api(`/candidates/${candidate.id}/produce`, { channelId: channel.id, commentSelection: 'TOP_REACTIONS', language: 'vi', voiceProfileId: profile.id, targetDurationSec, draftOnly: true, subtitlePreset: 'KaraokeHighlight' });
@@ -165,8 +197,8 @@ try {
       assert.equal(assets.length, 1); assert.equal(assets[0].segmentId, 'voice-preview'); assert(assets[0].durationMs < 15000);
     }
     const renderKey = randomUUID();
-    const rendered = await api(`/stories/${draft.storyProjectId}/render`, { speakingRate: 1, subtitlePreset: 'KaraokeHighlight' }, renderKey);
-    assert.deepEqual(await api(`/stories/${draft.storyProjectId}/render`, { speakingRate: 1, subtitlePreset: 'KaraokeHighlight' }, renderKey), rendered);
+    const rendered = await api(`/stories/${draft.storyProjectId}/render`, { speakingRate: 1, subtitlePreset: 'KaraokeHighlight', ...mediaOptions }, renderKey);
+    assert.deepEqual(await api(`/stories/${draft.storyProjectId}/render`, { speakingRate: 1, subtitlePreset: 'KaraokeHighlight', ...mediaOptions }, renderKey), rendered);
     const completed = await waitRun(rendered.runId);
     const alignment = completed.stages.find((stage) => stage.name === 'AUDIO_ALIGNMENT').output;
     assert.equal(alignment.timingPrecision, 'PROVIDER'); assert.match(alignment.provider, /base/u);
@@ -175,6 +207,7 @@ try {
     assert(Math.abs(video.durationMs - targetDurationSec * 1000) <= 100);
     assert.equal(video.reviewStatus, 'PENDING'); assert.equal(video.width, 1080); assert.equal(video.height, 1920);
     const manifest = video.renderManifest;
+    if (studioMedia) { assert.equal(manifest.mediaSettings.musicAssetId, mediaOptions.mediaSettings.musicAssetId); assert.equal(manifest.backgroundVideo.startFrame, 15); assert.equal(manifest.mediaSettings.ducking, true); assert.equal(manifest.mediaSettings.captionSize, 52); }
     if (sourceCapture) { assert.equal(manifest.sourceImages.length, 6); assert(manifest.sourceImages.every(image => image.anonymized)); }
     assert(manifest.subtitleTimeline.every((cue) => cue.words?.length && cue.endMs <= video.durationMs));
     await api(`/videos/${video.id}/reviews`, { decision: 'APPROVED' });
@@ -187,7 +220,7 @@ try {
     await writeFile(path.join(directory, `evidence-${targetDurationSec}.json`), JSON.stringify(evidence.at(-1), null, 2));
     console.log(JSON.stringify(evidence.at(-1)));
   }
-  const report = { status: 'PASS', workspaceId: workspace.id, source: sourceCapture ? 'actual_screenshots_of_owned_synthetic_DOM_mocked_capture_transport' : 'original_synthetic_fixture_not_facebook_post', originalScreenshots: sourceCapture, audio: 'NEURAL_VIENEU', alignment: 'multilingual-base-forced-DTW', networkForModels: 'offline_cached', shortPreview: targets.includes(40), paidApi: false, publishing: 'not_called', elapsedMs: Date.now() - started, videos: evidence };
+  const report = { status: 'PASS', workspaceId: workspace.id, source: sourceCapture ? 'actual_screenshots_of_owned_synthetic_DOM_mocked_capture_transport' : 'original_synthetic_fixture_not_facebook_post', originalScreenshots: sourceCapture, localBackgroundVideoAndMusic: studioMedia, audio: 'NEURAL_VIENEU', alignment: 'multilingual-base-forced-DTW', networkForModels: 'offline_cached', shortPreview: targets.includes(40), paidApi: false, publishing: 'not_called', elapsedMs: Date.now() - started, videos: evidence };
   await writeFile(path.join(directory, targets.length === 3 ? 'evidence.json' : `evidence-${targets.join('-')}.json`), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report));
 } finally {

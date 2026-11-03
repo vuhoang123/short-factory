@@ -1,5 +1,9 @@
 # Xuất video local từ bài Facebook/Threads
 
+**Kho nền/nhạc:** Studio → **Nền & âm nhạc → Khám phá nền & nhạc miễn phí** có 10 nền minh họa chuyển động và 12 nhạc CC0, xem/nghe thử và chọn trực tiếp hoặc thêm cả bộ. Máy này đã tải xong; máy khác chạy `pnpm local:media:setup` một lần. Xem [nguồn, giấy phép và kiểm thử](product/STUDIO_MEDIA_LIBRARY_REPORT.md).
+
+**Cập nhật Studio 03/11/2026:** bài nhập đã duyệt đi tiếp vào cùng bàn dựng của Discover: chọn comment → soạn lời đọc → xem trước ảnh gốc → chọn giọng/phụ đề/nền/nhạc → tạo MP4. Có video nền MP4 H.264, nhạc WAV local, chỉnh phụ đề và lưu bộ thiết lập trong workspace. Chạy `pnpm db:generate` và `pnpm db:deploy` sau khi cập nhật để tạo bảng preset. `/export` vẫn giữ luồng nhanh cũ. Xem [báo cáo và giới hạn](product/STUDIO_MAKER_REPORT.md).
+
 Luồng tối thiểu: **link nguồn + nội dung bài/bình luận → duyệt quyền → chọn bài → giọng đọc local + phụ đề → render MP4 → xem và tải về**. Không cần API key hoặc tài khoản developer. Link chỉ lưu nguồn tham chiếu; ứng dụng chưa tự lấy bài/bình luận từ Facebook/Threads. Script sử dụng bộ dựng deterministic, không gọi LLM trả phí.
 
 Từ Milestone 1 (02/11/2026), mở **Studio → Nhập bài mới** để chạy luồng này trong giao diện chính; `/export` vẫn hoạt động. Với bài đã có trong **Discover**, mở chi tiết → duyệt quyền/chọn bài → tiếp tục Studio → tạo bản nháp kịch bản → sửa/lưu → **Tạo video MP4** → xem/duyệt/tải. Chọn nhiều bài chỉ mở hàng đợi biên tập, chưa tự render. Xem [báo cáo UX](product/MILESTONE_1_REPORT.md).
@@ -36,7 +40,7 @@ Launcher ép origin web `http://127.0.0.1:3000` và API `http://127.0.0.1:3001` 
 6. Bấm **Lưu bài để kiểm tra**. Đọc bản đã lưu và các bình luận. Nếu trùng bài, hệ thống giữ bản cũ và quyền cũ, không ghi đè bằng dữ liệu vừa dán.
 7. Tích xác nhận đã đọc bản lưu, bấm **Duyệt quyền bản lưu**, rồi **Xác nhận chọn bài**. Các bước này cần OWNER/ADMIN/REVIEWER; tạo video cần OWNER/ADMIN/EDITOR. OWNER/ADMIN có thể làm toàn luồng.
 8. Chọn giọng VieNeu tiếng Việt (hoặc eSpeak nếu đang dùng cấu hình cũ) và độ dài mục tiêu; bấm tạo video. Có thể mở **Giọng đọc riêng** để thêm WAV PCM16 3–15 giây có quyền sử dụng. Theo dõi stage/progress; reload cùng tab tiếp tục theo dõi. Chỉ IDs/fingerprint/cấu hình của thao tác được lưu trong sessionStorage theo user/workspace.
-9. Xem video, duyệt output sau khi xem rồi tải **MP4**. Video có nền template sẵn, không bắt buộc upload background. Có thể mở Studio để chỉnh script/template thêm.
+9. Mở **Studio → Video đã tạo & duyệt → Xem & duyệt**. Bản MP4 và phần **Xem và duyệt video** nằm ngay phía trên bàn biên tập. Xem video, tick xác nhận đã kiểm tra rồi bấm **Duyệt video**; có thể tải **MP4** ngay trong khối này. Chủ workspace, Admin hoặc Reviewer được ghi nhận quyết định; Editor có thể xem/tải và chờ người có quyền duyệt. Video chỉ sẵn sàng duyệt sau khi dựng MP4 xong. Video có nền template sẵn, không bắt buộc upload background.
 
 Giọng eSpeak NG là giọng tổng hợp offline, chất lượng cơ bản. Thời gian phụ đề ở mức approximate, chưa phải forced alignment. Độ dài là mục tiêu; độ dài thực dựa trên phần lời đọc. Đường tải media vẫn kiểm tra session, workspace và quyền nguồn hiện hành.
 

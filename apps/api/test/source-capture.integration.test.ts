@@ -60,6 +60,7 @@ integration('user-assisted source capture: PostgreSQL and mocked browser bridge'
     expect((await post('/source-captures', body, key)).body).toEqual(first.body);
     expect(await db.outboxEvent.count({ where: { workspaceId, aggregateId: captureId, eventType: 'BROWSER_CAPTURE_REQUESTED' } })).toBe(1);
     expect((await outsider.get(`/api/v1/source-captures/${captureId}`)).status).toBe(404);
+    expect((await owner.get(`/api/v1/source-captures/${captureId}`)).body.browserRequest).toBeNull();
     expect((await post('/source-captures', { ...body, workspaceId: workspaces[1] })).status).toBe(400);
     expect((await post('/source-captures', body)).status).toBe(409);
   });
@@ -124,6 +125,8 @@ integration('user-assisted source capture: PostgreSQL and mocked browser bridge'
     const created = await post('/source-captures', body, key);
     expect(created.status).toBe(201); expect(created.body.status).toBe('WAITING_BROWSER');
     const id = created.body.id as string;
+    expect((await owner.get(`/api/v1/source-captures/${id}`)).body.browserRequest).toEqual({ url: fixture.url });
+    expect((await outsider.get(`/api/v1/source-captures/${id}`)).status).toBe(404);
     expect((await post('/source-captures', body, key)).body).toEqual(created.body);
     expect(await db.outboxEvent.count({ where: { workspaceId, aggregateId: id, eventType: 'BROWSER_CAPTURE_REQUESTED' } })).toBe(0);
     const entries = [fixture, ...fixture.comments];
@@ -143,6 +146,7 @@ integration('user-assisted source capture: PostgreSQL and mocked browser bridge'
     expect(completed.body).toMatchObject({ id, status: 'QUEUED' });
     expect((await post(`/source-captures/${id}/result`, snapshot, resultKey)).body).toEqual(completed.body);
     expect((await owner.get(`/api/v1/source-captures/${id}`)).body.output).toBeNull();
+    expect((await owner.get(`/api/v1/source-captures/${id}`)).body.browserRequest).toBeNull();
     expect(await db.outboxEvent.count({ where: { workspaceId, aggregateId: id, eventType: 'BROWSER_CAPTURE_REQUESTED' } })).toBe(1);
     const calls = vi.mocked(sources.localCaptureCall).mock.calls.length;
     await processLocalCapture(db, workspaceId, id);
@@ -162,12 +166,14 @@ integration('user-assisted source capture: PostgreSQL and mocked browser bridge'
     const upload = () => owner.post(`/api/v1/source-captures/${id}/images/${fixture.source_image_id}`).set('Origin', origin).set('Idempotency-Key', randomUUID()).set('Content-Type', 'image/png').send(bytes);
     expect((await upload()).status).toBe(201);
     expect((await post(`/source-captures/${id}/cancel`, {})).body.status).toBe('CANCELLED');
+    expect((await owner.get(`/api/v1/source-captures/${id}`)).body.browserRequest).toBeNull();
     expect((await upload()).status).toBe(409);
     expect((await post(`/source-captures/${id}/result`, { post: fixture })).status).toBe(409);
     await purgeCurrentBrowserCapture(db, workspaceId, users[0]!, id);
     const pending = await post('/source-captures', { url: fixture.url, channelId, browser: 'CURRENT' });
     const expiredId = pending.body.id as string;
     await db.workflowRun.update({ where: { id: expiredId }, data: { nextRunAt: new Date(Date.now() - 1000) } });
+    expect((await owner.get(`/api/v1/source-captures/${expiredId}`)).body.browserRequest).toBeNull();
     await recoverLocalCaptures(db);
     expect((await db.workflowRun.findUniqueOrThrow({ where: { id: expiredId } })).status).toBe('FAILED');
     expect(await db.outboxEvent.count({ where: { workspaceId, aggregateId: expiredId, eventType: 'LOCAL_CAPTURE_PURGE_REQUESTED' } })).toBe(1);

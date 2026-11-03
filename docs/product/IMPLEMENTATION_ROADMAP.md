@@ -33,6 +33,14 @@ Status: **complete for the local scope below**; 194 TypeScript tests, 4 Python t
 
 Approved video backgrounds and a broader media library from the original proposal are deferred beyond this narrower owner-approved milestone. Arbitrary Facebook/Threads/group extraction and live publishing remain `BLOCKED_EXTERNAL`.
 
+## Video maker research follow-up — 3 November 2026
+
+The owner subsequently authorized implementation and additional Studio UX improvements. Local implementation and verification are recorded in [STUDIO_MAKER_REPORT.md](STUDIO_MAKER_REPORT.md): shared import/editor flow, original-image draft preview, local video backgrounds/music, caption controls and workspace presets. Additional aspect ratios remain deferred. The reference review below is the historical research basis.
+
+The owner supplied MakeShort's Threads-to-video page as a product reference. [MAKESHORT_REFERENCE_REVIEW.md](MAKESHORT_REFERENCE_REVIEW.md) records the public editor observations, code-backed feature comparison, evidence limits and proposed acceptance gates. This is research, not a shipped milestone or an authorization to replace original screenshots with recreated social cards.
+
+Recommended order for the next local video-maker work: consolidate the existing import/editor controls and add original-image composition preview before rendering; then add local video backgrounds and music mixing/ducking; then visual caption choices and reusable workspace presets. Additional aspect ratios follow layout verification. Existing local/custom voices, comment selection, original screenshot rendering and job reliability should be reused. These proposals do not renumber the publishing milestone below.
+
 ## Later milestones — deferred
 
 | Milestone | Scope | Required gates |

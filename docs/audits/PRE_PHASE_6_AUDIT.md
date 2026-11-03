@@ -1,5 +1,7 @@
 # PRE-PHASE 6 — Báo cáo audit toàn dự án
 
+> Cập nhật Studio ngày 03/11/2026: [bàn dựng chung, preview ảnh gốc, nền/nhạc local và preset](../product/STUDIO_MAKER_REPORT.md) đã triển khai và xác minh. Các snapshot audit cũ bên dưới giữ theo thời điểm báo cáo.
+
 > Cập nhật nút mở/chụp ngày 02/11/2026: [Chrome/Edge hiện tại qua extension](../product/CURRENT_BROWSER_CAPTURE_REPORT.md) là mặc định; cửa sổ Chromium riêng là tùy chọn phụ. Không sao chép cookie hoặc bật cổng debug của trình duyệt.
 
 > Cập nhật sau Milestone 2: [ảnh nguồn thật và bộ đọc video](../product/SOURCE_CAPTURE_REPORT.md), [repo tham khảo và quyết định áp dụng](../research/VIDEO_READER_REFERENCES.md). Profile trình duyệt do người dùng mở riêng ở local; không thay đổi trạng thái BLOCKED_EXTERNAL của publishing.
@@ -591,3 +593,12 @@ Phạm vi Phase6 local manual/offline/download đã được triển khai và ki
 **Quyết định Phase 6:** OWNER đã chọn “Ổn định export local: lịch sử render, hủy/timeout, phục hồi job và kiểm thử”. Scope/acceptance đã hoàn tất và kiểm chứng local; kết quả cuối ở docs/17-PHASE-6-REPORT.md. Không suy ra Phase4/5, remote CI, Docker rebuild hoặc production load/soak đã đạt.
 
 Báo cáo này là baseline sau local export; các findings giữ ID để theo dõi đóng/mở. Chưa gọi dịch vụ trả phí, chưa fetch bài thật hoặc publish thật. Lượt audit đầu và lượt triển khai sau có phạm vi thay đổi khác nhau được phân biệt rõ; hiện dependencies không còn dở.
+
+
+## Studio maker follow-up — 3 November 2026
+
+The owner-authorized local Studio enhancements are recorded in [STUDIO_MAKER_REPORT.md](../product/STUDIO_MAKER_REPORT.md): shared import/editor flow, original-image draft preview, local MP4 backgrounds/WAV music, caption controls and workspace presets. The report contains current test/media evidence and the additive preset migration. This preserves the Phase 6 reliability mechanisms and does not change external publishing gates.
+
+## UI/UX follow-up — 3 November 2026
+
+The app-wide layout and Studio workflow corrections are recorded in [UI_UX_AUDIT_REPORT.md](../product/UI_UX_AUDIT_REPORT.md), with desktop/mobile evidence and regression checks for 15 screens at three widths. This UI-only follow-up preserves Phase 6 job reliability, workspace authorization and external approval gates.

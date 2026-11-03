@@ -70,7 +70,13 @@ The production API derives workspace scope from the authenticated session and me
 
 Rendered outputs enter `READY_FOR_REVIEW` with `reviewStatus=PENDING` until a reviewer records a decision. The current API uses the existing workspace-local content-addressed object store; it does not issue public URLs or implement an R2 adapter.
 
+`GET /videos/:id` includes `story.channel:{id,name,language}` (or `null` for an unattached channel), matching Studio's video response contract. Database-backed review tests parse the actual HTTP response with the same client validator before approving an output.
+
 ## Phase 6 local production operations
+
+Studio maker follow-up: `/backgrounds` accepts attested images or bounded H.264 `video/mp4`; `GET/POST /music` lists/uploads workspace PCM16 WAV music. `GET/POST /studio-presets` reads/saves named workspace settings; writes require an editor, current asset/voice access and an idempotency key. Saving the same trimmed name updates settings. Presets exclude source content and IDs. Encoded upload metadata uses `X-Asset-Encoding: uri` with encoded `X-Asset-Name`/`X-Rights-Evidence`; existing attestation headers remain required. Authorized media GETs support a single byte range for audio/video seeking.
+
+Production create, story regeneration and render accept optional strict `mediaSettings`: `backgroundStartSec` (0–300), `musicAssetId` (workspace UUID or null), `musicVolume` (0–0.5), `ducking`, `captionSize` (36–72), `captionColor` (six-digit hex), `captionPosition` (BOTTOM/CENTER). Omitting it preserves legacy request identities. Asset rights, bounds and source-image bindings are rechecked before enqueue and during work. See [Studio maker report](product/STUDIO_MAKER_REPORT.md).
 
 `GET /production-runs?limit=20&cursor=<run-id>&status=<status>` returns `{ items, nextCursor }`, ordered newest first by creation time and ID. Limit is 1–100; status and cursor are optional. Every row and cursor is authorized against the session workspace. Summaries include stage/progress, attempt count, error code and available output IDs; they omit raw input and source body. Detail remains available at `GET /production-runs/:id`.
 
@@ -125,7 +131,7 @@ The following routes require a session in the active workspace. Mutation roles: 
 
 - `POST /api/v1/source-captures/browser` `{url}`: opens a dedicated visible browser for manual login. No password/cookie payload is accepted.
 - `POST /api/v1/source-captures` `{url,channelId}`: returns `{id,status}`; no client workspace/user IDs accepted.
-- `GET /api/v1/source-captures/:id`: durable status, safe error code and completed `{postId,warnings,scannedComments,capturedComments}` output.
+- `GET /api/v1/source-captures/:id`: requesting user's durable status, safe error code and completed `{postId,warnings,scannedComments,capturedComments}` output. `browserRequest:{url}` is present only for an unexpired `WAITING_BROWSER` current-browser job; otherwise `null`. Studio validates this server-owned source before reconnecting a replacement tab. Foreign users/workspaces receive 404.
 - `POST /api/v1/source-captures/:id/cancel` `{}`: fences further persistence and requests cancellation/cleanup.
 - `GET /api/v1/posts/:id/source-images`: workspace-authorized snapshot IDs and metadata. Images use the existing authenticated `/media/:id` route; removed sources return 404.
 

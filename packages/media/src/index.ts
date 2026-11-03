@@ -46,3 +46,6 @@ export * from './manifest.js';
 export * from './background.js';
 export * from './source-images.js';
 export * from './render.js';
+export * from './studio-settings.js';
+export * from './media-upload.js';
+export { readCuratedCatalog, readCuratedFile } from './curated-media.js';

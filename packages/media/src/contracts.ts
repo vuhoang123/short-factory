@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { studioMediaSchema } from './studio-settings';
 
 export const storySegmentTypeSchema = z.enum(['HOOK', 'INTRO', 'POST', 'COMMENT', 'TRANSITION', 'COMMENTARY', 'OUTRO']);
 export const narrationTypeSchema = z.enum(['VERBATIM', 'PARAPHRASE', 'ORIGINAL_COMMENTARY']);
@@ -64,6 +65,8 @@ const frameSegmentSchema = z.object({
 }).strict().refine((segment) => segment.endFrame > segment.startFrame, 'Visual segment must have a positive duration.');
 
 export const renderManifestSchema = z.object({
+  mediaSettings: studioMediaSchema.optional(),
+  backgroundVideo: z.object({ durationFrames: z.number().int().positive(), startFrame: z.number().int().nonnegative() }).strict().refine(value => value.startFrame < value.durationFrames, 'Background start must precede its end.').optional(),
   sourceImages: z.array(sourceImageBindingSchema).max(11).optional(),
   version: z.literal(1),
   templateId: z.enum(['RedditStory', 'SocialCommentary']),
@@ -99,6 +102,7 @@ export const renderManifestSchema = z.object({
 export type RenderManifest = z.infer<typeof renderManifestSchema>;
 
 export const productionInputSchema = z.object({
+  mediaSettings: studioMediaSchema.optional(),
   sourceImages: z.array(sourceImageBindingSchema).max(11).optional(),
   audioTimed: z.literal(true).optional(),
   preview: z.literal(true).optional(),
@@ -128,6 +132,7 @@ export const compositionInputSchema = z.object({
   post: z.object({ title: z.string().nullable(), body: z.string(), authorAlias: z.string().nullable() }).strict(),
   comments: z.array(z.object({ id: z.string(), body: z.string(), authorAlias: z.string().nullable() }).strict()),
   backgroundSrc: z.string().nullable(),
+  musicSrc: z.string().nullable().optional(),
   audioSources: z.record(z.string(), z.string()),
   sourceImageSources: z.record(z.string(), z.string()).optional(),
 }).strict();

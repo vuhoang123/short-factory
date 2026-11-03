@@ -215,18 +215,15 @@ export class MediaProductionPipeline {
     const post = run.story.post;
     const selectedComments = post.comments.filter((comment) => input.commentIds.includes(comment.id));
     if (post.deletedAt || post.sensitiveFlags.length || selectedComments.some((comment) => comment.sensitiveFlags.length)) throw new Error('BLOCKED_RIGHTS');
-    if (input.backgroundAssetId) {
-      // Background ownership/consent is rechecked here because it may change after enqueue.
-      return this.assertBackground(run.workspaceId, input.backgroundAssetId);
-    }
-    return Promise.resolve();
+    return this.assertPresentationAssets(run.workspaceId, input);
   }
 
   private async assertRunActive(tx: Prisma.TransactionClient, run: RunWithStory, input: ProductionInput) {
     await this.assertAttemptActive(tx, run);
-    const [post, background] = await Promise.all([
+    const [post, background, music] = await Promise.all([
       tx.sourcePost.findFirst({ where: { id: run.story.post.id, workspaceId: run.workspaceId, deletedAt: null }, include: { comments: true, rights: { orderBy: { createdAt: 'desc' }, take: 1 } } }),
       input.backgroundAssetId ? tx.mediaAsset.findFirst({ where: { id: input.backgroundAssetId, workspaceId: run.workspaceId, kind: 'BACKGROUND' }, select: { rightsMetadata: true } }) : Promise.resolve(null),
+      input.mediaSettings?.musicAssetId ? tx.mediaAsset.findFirst({ where: { id: input.mediaSettings.musicAssetId, workspaceId: run.workspaceId, kind: 'MUSIC' }, select: { rightsMetadata: true } }) : Promise.resolve(null),
     ]);
     const parent = await tx.workflowRun.findFirst({ where: { workspaceId: run.workspaceId, entityType: 'AUTOPILOT', output: { path: ['productionRunId'], equals: run.id } } });
     if (parent) {
@@ -242,12 +239,15 @@ export class MediaProductionPipeline {
     const selected = post.comments.filter((comment) => input.commentIds.includes(comment.id));
     if (post.sensitiveFlags.length || selected.length !== input.commentIds.length || selected.some((comment) => comment.sensitiveFlags.length)) throw new Error('BLOCKED_RIGHTS');
     if (input.backgroundAssetId && (!background || !validBackgroundRights(background.rightsMetadata))) throw new Error('BLOCKED_RIGHTS');
+    if (input.mediaSettings?.musicAssetId && (!music || !validBackgroundRights(music.rightsMetadata))) throw new Error('BLOCKED_RIGHTS');
   }
 
-  private async assertBackground(workspaceId: string, id: string) {
-    const asset = await this.db.mediaAsset.findFirst({ where: { id, workspaceId, kind: 'BACKGROUND' }, select: { rightsMetadata: true } });
-    const value = asset?.rightsMetadata;
-    if (!validBackgroundRights(value ?? null)) throw new Error('BLOCKED_RIGHTS');
+  private async assertPresentationAssets(workspaceId: string, input: ProductionInput) {
+    for (const [id, kind] of [[input.backgroundAssetId, 'BACKGROUND'], [input.mediaSettings?.musicAssetId, 'MUSIC']] as const) {
+      if (!id) continue;
+      const asset = await this.db.mediaAsset.findFirst({ where: { id, workspaceId, kind }, select: { rightsMetadata: true } });
+      if (!asset || !validBackgroundRights(asset.rightsMetadata)) throw new Error('BLOCKED_RIGHTS');
+    }
   }
 
   private async execute(run: RunWithStory, input: ProductionInput) {
@@ -533,7 +533,9 @@ export class MediaProductionPipeline {
       const bySegment = new Set(audio.map((item) => item.segmentId));
       if (script.segments.some((segment) => !bySegment.has(segment.id))) throw new Error('AUDIO_ASSET_MISSING');
       if (input.backgroundAssetId && (!background || !validBackgroundRights(background.rightsMetadata))) throw new Error('BLOCKED_RIGHTS');
-      const assets = [...audio.map((item) => item.mediaAsset), ...(background ? [background] : [])];
+      const music = input.mediaSettings?.musicAssetId ? await this.db.mediaAsset.findFirst({ where: { workspaceId: run.workspaceId, id: input.mediaSettings.musicAssetId, kind: 'MUSIC' } }) : null;
+      await this.assertPresentationAssets(run.workspaceId, input);
+      const assets = [...audio.map((item) => item.mediaAsset), ...(background ? [background] : []), ...(music ? [music] : [])];
       for (const asset of assets) await this.store.get(run.workspaceId, asset.checksum);
       await this.db.$transaction((tx) => this.assertRunActive(tx, run, input), { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
       return { mediaAssetIds: assets.map((asset) => asset.id), ready: true };
@@ -591,11 +593,15 @@ export class MediaProductionPipeline {
       const timing = alignment.segments.find((entry) => entry.segmentId === segment.id);
       return { assetId: item.mediaAsset.id, segmentId: segment.id, durationMs: item.durationMs, ...(timing?.providerTimings ? { providerTimings: timing.providerTimings.map((word) => ({ ...word, startMs: word.startMs - timing.startMs, endMs: word.endMs - timing.startMs })) } : {}) };
     });
+    const background = input.backgroundAssetId ? await this.db.mediaAsset.findFirst({ where: { id: input.backgroundAssetId, workspaceId: run.workspaceId, kind: 'BACKGROUND' } }) : null;
+    const videoMeta = background?.mimeType === 'video/mp4' ? z.object({ durationMs: z.number().positive() }).parse(background.metadata) : null;
     const { manifest, checksum, subtitle } = createRenderManifest({
       storyProjectId: run.story.id, storyVersionId: version.id, storyVersion: version.version, sourcePostId: run.story.post.id,
       platform: safePlatform(run.story.post.platform), script, templateId: input.templateId, backgroundAssetId: input.backgroundAssetId,
       attribution: { required: run.story.post.rights[0]?.attributionRequired ?? false, text: run.story.post.rights[0]?.attributionText ?? null },
       visualSettings: { theme: input.theme, anonymizeAuthors: input.anonymizeAuthors, showEngagement: input.showEngagement }, audioAssets: audioItems, subtitlePreset: input.subtitlePreset,
+      ...(input.mediaSettings ? { mediaSettings: input.mediaSettings } : {}),
+      ...(videoMeta ? { backgroundVideo: { durationFrames: Math.ceil(videoMeta.durationMs / 1000 * 30), startFrame: Math.floor((input.mediaSettings?.backgroundStartSec ?? 0) * 30) } } : {}),
       ...(input.sourceImages ? { sourceImages: input.sourceImages } : {}),
     });
     if (existing && existing.checksum !== checksum) throw new Error('RENDER_MANIFEST_CONFLICT');
@@ -633,12 +639,14 @@ export class MediaProductionPipeline {
         audioSources[row.mediaAsset.id] = `data:${row.mediaAsset.mimeType};base64,${bytes.toString('base64')}`;
       }
       const backgroundSrc = background ? `data:${background.mimeType};base64,${(await this.store.get(run.workspaceId, background.checksum)).toString('base64')}` : null;
+      const music = input.mediaSettings?.musicAssetId ? await this.db.mediaAsset.findFirst({ where: { workspaceId: run.workspaceId, id: input.mediaSettings.musicAssetId, kind: 'MUSIC' } }) : null;
+      const musicSrc = music ? `data:${music.mimeType};base64,${(await this.store.get(run.workspaceId, music.checksum)).toString('base64')}` : null;
       const comments = run.story.post.comments.filter((comment) => input.commentIds.includes(comment.id)).map((comment) => ({ id: comment.id, body: comment.body, authorAlias: null }));
       const manifestRecord = await this.db.renderManifest.findFirst({ where: { id: manifestOutput.manifestId, workspaceId: run.workspaceId } });
       if (!manifestRecord) throw new Error('RENDER_MANIFEST_MISSING');
       const compositionInput: CompositionInput = {
         manifest: manifestRecord.manifest as unknown as CompositionInput['manifest'],
-        post: { title: run.story.post.title, body: run.story.post.body, authorAlias: run.story.post.authorAlias }, comments, backgroundSrc, audioSources,
+        post: { title: run.story.post.title, body: run.story.post.body, authorAlias: run.story.post.authorAlias }, comments, backgroundSrc, audioSources, ...(musicSrc ? { musicSrc } : {}),
         ...(input.sourceImages ? { sourceImageSources: await this.sourceImages(run, input) } : {}),
       };
       const directory = await mkdtemp(path.join(os.tmpdir(), 'sf-render-'));

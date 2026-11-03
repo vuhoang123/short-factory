@@ -1,17 +1,26 @@
 /* global chrome */
-import { captureRequest, sourceIdentity, matchingSource, safeError, studioOrigin } from './protocol.js';
+import { captureAvailability, captureLifetimeMs, captureRequest, sourceUrl, sourceIdentity, matchingSource, safeError, studioOrigin } from './protocol.js';
 import { readSource, sourceGeometry } from './engine.js';
 
 let current;
 let status = 'Chưa có bài chờ chụp. Mở Studio và chọn bài trước.';
 let running = false;
 let cancelled = false;
-const expires = 30 * 60 * 1000;
+const expires = captureLifetimeMs;
 const maximumImage = 20 * 1024 * 1024;
 const validPending = pending => pending && Date.now() - pending.createdAt < expires;
 async function pending() {
   current ??= (await chrome.storage.session.get('pendingCapture')).pendingCapture;
   return validPending(current) ? current : undefined;
+}
+async function studioAvailable(request) {
+  if (!request) return false;
+  try {
+    const tab = await chrome.tabs.get(request.studioTabId);
+    if (studioOrigin(tab.url) !== request.origin) return false;
+    const response = await chrome.tabs.sendMessage(request.studioTabId, { source: 'shorts-factory-extension', type: 'CAPTURE_CONTEXT', requestId: request.requestId, jobId: request.jobId });
+    return response?.ok === true;
+  } catch { return false; }
 }
 async function save(value) { current = value; await chrome.storage.session.set({ pendingCapture: value }); }
 const check = () => { if (cancelled) throw new Error('CAPTURE_CANCELLED'); };
@@ -144,12 +153,14 @@ async function prepare(message, sender) {
   if (!origin || !sender.tab?.id || sender.frameId !== 0) throw new Error('CAPTURE_STUDIO_ORIGIN_INVALID');
   const input = captureRequest(message);
   const existing = await pending();
-  if (existing?.jobId === input.jobId && existing.requestId === input.requestId && existing.studioTabId === sender.tab.id && existing.origin === origin) {
+  if (existing?.jobId === input.jobId && existing.requestId === input.requestId && existing.url === input.url && existing.origin === origin && (existing.studioTabId === sender.tab.id || !running && !await studioAvailable(existing))) {
     const source = await chrome.tabs.get(existing.sourceTabId).catch(() => null);
     if (source) {
       if (existing.cancelled) throw new Error('CAPTURE_CANCELLED');
+      const rebound = { ...existing, studioTabId: sender.tab.id };
+      await save(rebound);
       if (!existing.resolvedIdentity && sourceIdentity(existing.url).includes(':share:')) {
-        await save({ ...existing, allowShareResolution: true });
+        await save({ ...rebound, allowShareResolution: true });
         await chrome.tabs.update(source.id, { active: true, url: existing.url });
       } else await chrome.tabs.update(source.id, { active: true });
       return { ok: true, sourceTabId: source.id };
@@ -163,6 +174,10 @@ async function prepare(message, sender) {
   return { ok: true, sourceTabId: tab.id };
 }
 async function onMessage(message, sender) {
+  if (message?.type === 'BRIDGE_PING') {
+    if (!studioOrigin(sender.url) || !sender.tab?.id || sender.frameId !== 0) throw new Error('CAPTURE_STUDIO_ORIGIN_INVALID');
+    return { ok: true, version: chrome.runtime.getManifest().version };
+  }
   if (message?.type === 'PREPARE_CAPTURE') return prepare(message, sender);
   if (message?.type === 'CANCEL_CAPTURE') {
     const request = await pending();
@@ -175,8 +190,50 @@ async function onMessage(message, sender) {
   if (sender.url !== chrome.runtime.getURL('popup.html')) throw new Error('CAPTURE_EXTENSION_SENDER_INVALID');
   const request = await pending();
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  const ready = Boolean(request && !request.cancelled && !request.completed && !request.navigationMismatch && tab?.id === request.sourceTabId && matchingSource(request, await frameUrl(tab.id, tab.url)));
-  if (message?.type === 'CAPTURE_STATUS') return { ok: true, ready, busy: running, status: ready || running ? status : request?.completed ? status : request?.cancelled ? 'Đã hủy lượt chụp. Tạo lượt mới từ Studio nếu cần.' : 'Mở đúng tab bài đã được mở từ Studio. Nếu vừa đăng nhập từ link share, quay lại Studio và mở lại link gốc.', url: request?.url };
+  const activeUrl = tab?.id ? await frameUrl(tab.id, tab.url) : undefined;
+  const availability = captureAvailability(current, { tabId: tab?.id, url: activeUrl, studioAvailable: await studioAvailable(request), now: Date.now() });
+  const ready = availability.ready;
+  if (message?.type === 'CAPTURE_STATUS') {
+    const descriptions = {
+      NO_REQUEST: 'Chưa có lượt chụp từ Studio. Nếu vừa cài extension, tab Studio cũ cần tải lại. Mở Studio bằng nút dưới, rồi bấm “Mở bài trong trình duyệt hiện tại”.',
+      EXPIRED: 'Lượt chụp đã hết 30 phút. Mở Studio và tạo lượt mới.',
+      CANCELLED: 'Lượt chụp đã hủy. Mở Studio và tạo lượt mới.',
+      COMPLETED: 'Đã gửi ảnh về Studio. Quay lại để kiểm tra và dựng video.',
+      STUDIO_UNAVAILABLE: 'Tab Studio đang nhận ảnh đã đóng, đổi workspace hoặc không còn mở lượt này. Mở Studio để khôi phục lượt chụp.',
+      WRONG_TAB: 'Bạn đang ở tab khác với tab được Studio mở. Bấm nút dưới để về đúng bài chờ chụp.',
+      SOURCE_CHANGED: 'Tab đã chuyển sang bài khác. Mở lại bài đã chọn trước khi chụp.',
+      SOURCE_UNVERIFIED: 'Chưa xác nhận được bài sau chuyển hướng hoặc đăng nhập. Bấm mở lại bài đã chọn; không cần đăng nhập lại nếu phiên đã còn hiệu lực.',
+    };
+    return { ok: true, ready, reason: availability.reason, busy: running, status: ready || running ? status : descriptions[availability.reason], url: current?.url, requestId: request?.requestId, jobId: request?.jobId,
+      recovery: running || ready ? null : ['WRONG_TAB', 'SOURCE_CHANGED', 'SOURCE_UNVERIFIED'].includes(availability.reason) ? 'OPEN_SOURCE' : 'OPEN_STUDIO' };
+  }
+  if (message?.type === 'OPEN_STUDIO') {
+    if (running) throw new Error('CAPTURE_ALREADY_RUNNING');
+    if (request?.completed) {
+      const studio = await chrome.tabs.get(request.studioTabId).catch(() => null);
+      if (studio && studioOrigin(studio.url) === request.origin) { await chrome.tabs.update(studio.id, { active: true }); return { ok: true }; }
+    }
+    const studios = await chrome.tabs.query({ url: ['http://127.0.0.1:3000/*', 'http://localhost:3000/*'], currentWindow: true });
+    const origin = request?.origin ?? studios.map(value => studioOrigin(value.url)).find(Boolean) ?? 'http://127.0.0.1:3000';
+    const target = new URL('/studio?mode=import', origin);
+    try { target.searchParams.set('captureUrl', sourceUrl(request?.url ?? activeUrl)); } catch { /* Studio still accepts a manually pasted link. */ }
+    if (request && !request.cancelled && !request.completed) {
+      target.searchParams.set('captureJob', request.jobId);
+      target.searchParams.set('captureRequest', request.requestId);
+    }
+    const studio = await chrome.tabs.create({ url: 'about:blank', active: true });
+    await chrome.tabs.update(studio.id, { url: target.toString() });
+    return { ok: true };
+  }
+  if (message?.type === 'OPEN_SOURCE') {
+    if (running || !request || request.cancelled || request.completed || request.requestId !== message.requestId || request.jobId !== message.jobId || !await studioAvailable(request)) throw new Error('CAPTURE_REQUEST_INVALID');
+    const source = await chrome.tabs.get(request.sourceTabId).catch(() => null);
+    const target = source ?? await chrome.tabs.create({ url: 'about:blank', active: true, windowId: tab?.windowId });
+    await save({ ...request, sourceTabId: target.id, resolvedIdentity: null, navigationMismatch: false, allowShareResolution: true });
+    status = 'Mở đầy đủ bài/bình luận trong tab này, rồi bấm extension để chụp.';
+    await chrome.tabs.update(target.id, { url: request.url, active: true });
+    return { ok: true };
+  }
   if (message?.type === 'CANCEL_FROM_POPUP') {
     cancelled = true;
     if (request) {

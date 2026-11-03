@@ -55,8 +55,11 @@ export class ContentService {
   async capture(request: Request, id: string) {
     const context = await this.auth.context(request);
     const run = await this.db.workflowRun.findFirst({ where: { id, workspaceId: context.workspaceId, entityType: 'LOCAL_CAPTURE' } });
-    if (!run || run.status === 'TAKEN_DOWN' || captureInputSchema.parse(run.input).requestedById !== context.userId) return notFound();
-    return { id: run.id, status: run.status, errorCode: run.errorCode, output: run.status === 'SUCCEEDED' ? run.output : null };
+    if (!run || run.status === 'TAKEN_DOWN') return notFound();
+    const input = captureInputSchema.parse(run.input);
+    if (input.requestedById !== context.userId) return notFound();
+    const browserRequest = run.status === 'WAITING_BROWSER' && input.browser === 'CURRENT' && run.nextRunAt && run.nextRunAt > new Date() ? { url: input.url } : null;
+    return { id: run.id, status: run.status, errorCode: run.errorCode, output: run.status === 'SUCCEEDED' ? run.output : null, browserRequest };
   }
 
   async cancelCapture(request: Request, id: string) {
@@ -76,9 +79,11 @@ export class ContentService {
 
   async sourceImages(request: Request, id: string) {
     const context = await this.auth.context(request);
-    if (!await this.db.sourcePost.findFirst({ where: { id, workspaceId: context.workspaceId, deletedAt: null } })) return notFound();
-    const assets = await this.db.mediaAsset.findMany({ where: { workspaceId: context.workspaceId, kind: 'SOURCE_CAPTURE', metadata: { path: ['postId'], equals: id } }, select: { id: true, metadata: true } });
-    return { items: assets };
+    const post = await this.db.sourcePost.findFirst({ where: { id, workspaceId: context.workspaceId, deletedAt: null }, select: { rawPayload: true } });
+    if (!post) return notFound();
+    const assets = await this.db.mediaAsset.findMany({ where: { workspaceId: context.workspaceId, kind: 'SOURCE_CAPTURE', metadata: { path: ['postId'], equals: id } }, select: { id: true, checksum: true, metadata: true } });
+    const captured = Boolean(post.rawPayload && typeof post.rawPayload === 'object' && !Array.isArray(post.rawPayload) && typeof post.rawPayload.captureRunId === 'string');
+    return { items: assets, captured };
   }
 
   private async waitingBrowser(tx: Prisma.TransactionClient, context: AuthContext, id: string) {

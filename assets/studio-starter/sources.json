@@ -1,0 +1,317 @@
+{
+  "version": 1,
+  "license": "CC0-1.0",
+  "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+  "verifiedAt": "2026-11-03",
+  "sources": [
+    {
+      "key": "lofi.zip",
+      "url": "https://opengameart.org/sites/default/files/lo-fi_and_chill_lofi_collection.zip",
+      "sha256": "39b52ae53c857c20395dca6fc18595bdee7b17c1a921cb3a72a9d4321ba0c7ea"
+    },
+    {
+      "key": "piano.mp3",
+      "url": "https://opengameart.org/sites/default/files/Mystical%20Piano_0.mp3",
+      "sha256": "b19c57ba33e90df581006f954dba35201ed31f5f8e7018c74fc0153f387a66f6"
+    },
+    {
+      "key": "chills.mp3",
+      "url": "https://opengameart.org/sites/default/files/01_holiznacc0_-_chills_0.mp3",
+      "sha256": "88cf8c964ea08b7eca071332ce57ebb33a09838f02cccda0ade8e792c6bc6e2c"
+    },
+    {
+      "key": "sherwood.ogg",
+      "url": "https://opengameart.org/sites/default/files/sherwood_0.ogg",
+      "sha256": "a7796c847682f5fd00041ffc0b0d71b67d95a41b4d6d914cd8e11bc37fe29a88"
+    },
+    {
+      "key": "funked-up.mp3",
+      "url": "https://opengameart.org/sites/default/files/Funked%20Up.mp3",
+      "sha256": "57cd81254a0f4e068535c5421f93b586514332ad2377f81aea190dd91659fff3"
+    },
+    {
+      "key": "emotional-piano-loop.wav",
+      "url": "https://opengameart.org/sites/default/files/Piano%20Loop.wav",
+      "sha256": "6280cf2a20c9d941ddb012656143c53044f32bed54c2a0d1411a3fdfbbbcad6d"
+    },
+    {
+      "key": "background-1.png",
+      "url": "https://opengameart.org/sites/default/files/battleback1.png",
+      "sha256": "af41cd9bcce33366d8c218a82f16bb08b7838d4d0f80182a1059b968d20f182f"
+    },
+    {
+      "key": "background-2.png",
+      "url": "https://opengameart.org/sites/default/files/battleback2.png",
+      "sha256": "e49290e53bbd5d48f91c7e2ee5349594263dd224f43f92e45083fb5b3f58916f"
+    },
+    {
+      "key": "background-3.png",
+      "url": "https://opengameart.org/sites/default/files/battleback3.png",
+      "sha256": "9e1a33a1a80c05580709d5633e33c81e88c6c365b5b88aaec07534d3ff5ef94e"
+    },
+    {
+      "key": "background-4.png",
+      "url": "https://opengameart.org/sites/default/files/battleback4.png",
+      "sha256": "f96c7b1bc4fc32941faa37731fbca3bce7234e9d8dc4b374ad5fee4f301d910d"
+    },
+    {
+      "key": "background-5.png",
+      "url": "https://opengameart.org/sites/default/files/battleback5.png",
+      "sha256": "b7cc0437acbe5e4d697d34c71d927b374c4281b1a986fb03cd51585f0f7054df"
+    },
+    {
+      "key": "background-6.png",
+      "url": "https://opengameart.org/sites/default/files/battleback6.png",
+      "sha256": "2b75b7c9ebdcb89f3d343e54bf2daba84232fdb56002eff3edcc3ea51ec02ea0"
+    },
+    {
+      "key": "background-7.png",
+      "url": "https://opengameart.org/sites/default/files/battleback7.png",
+      "sha256": "d8d52c61e4a0a96b7dd2c79c315beb327f52ac281f530026ad9440f1ff4057af"
+    },
+    {
+      "key": "background-8.png",
+      "url": "https://opengameart.org/sites/default/files/battleback8.png",
+      "sha256": "6f69a97e6030fd93b3e96aac1b337a7fd93b92d7696b5b2458bfca564f1d7871"
+    },
+    {
+      "key": "background-9.png",
+      "url": "https://opengameart.org/sites/default/files/battleback9.png",
+      "sha256": "af627968be55852cb92efbba0aa13ca8709a09468d23f644f8e7996c5ba2b995"
+    },
+    {
+      "key": "background-10.png",
+      "url": "https://opengameart.org/sites/default/files/battleback10.png",
+      "sha256": "b1a85dc825ffc33d06d645ab1627c675b22beb44062064f31ae1d85550cbb0b7"
+    }
+  ],
+  "assets": [
+    {
+      "key": "scene-1",
+      "kind": "BACKGROUND",
+      "name": "Rừng xanh",
+      "category": "Minh họa",
+      "artist": "Nidhoggn",
+      "sourceUrl": "https://opengameart.org/content/backgrounds-3",
+      "source": "background-1.png",
+      "description": "Tranh CC0 với chuyển động pan/zoom nhẹ, lặp 8 giây."
+    },
+    {
+      "key": "scene-2",
+      "kind": "BACKGROUND",
+      "name": "Rừng tuyết",
+      "category": "Minh họa",
+      "artist": "Nidhoggn",
+      "sourceUrl": "https://opengameart.org/content/backgrounds-3",
+      "source": "background-2.png",
+      "description": "Tranh CC0 với chuyển động pan/zoom nhẹ, lặp 8 giây."
+    },
+    {
+      "key": "scene-3",
+      "kind": "BACKGROUND",
+      "name": "Thung lũng nắng",
+      "category": "Minh họa",
+      "artist": "Nidhoggn",
+      "sourceUrl": "https://opengameart.org/content/backgrounds-3",
+      "source": "background-3.png",
+      "description": "Tranh CC0 với chuyển động pan/zoom nhẹ, lặp 8 giây."
+    },
+    {
+      "key": "scene-4",
+      "kind": "BACKGROUND",
+      "name": "Làng quê",
+      "category": "Minh họa",
+      "artist": "Nidhoggn",
+      "sourceUrl": "https://opengameart.org/content/backgrounds-3",
+      "source": "background-4.png",
+      "description": "Tranh CC0 với chuyển động pan/zoom nhẹ, lặp 8 giây."
+    },
+    {
+      "key": "scene-5",
+      "kind": "BACKGROUND",
+      "name": "Hang tím",
+      "category": "Minh họa",
+      "artist": "Nidhoggn",
+      "sourceUrl": "https://opengameart.org/content/backgrounds-3",
+      "source": "background-5.png",
+      "description": "Tranh CC0 với chuyển động pan/zoom nhẹ, lặp 8 giây."
+    },
+    {
+      "key": "scene-6",
+      "kind": "BACKGROUND",
+      "name": "Rừng thu vàng",
+      "category": "Minh họa",
+      "artist": "Nidhoggn",
+      "sourceUrl": "https://opengameart.org/content/backgrounds-3",
+      "source": "background-6.png",
+      "description": "Tranh CC0 với chuyển động pan/zoom nhẹ, lặp 8 giây."
+    },
+    {
+      "key": "scene-7",
+      "kind": "BACKGROUND",
+      "name": "Rừng lá đỏ",
+      "category": "Minh họa",
+      "artist": "Nidhoggn",
+      "sourceUrl": "https://opengameart.org/content/backgrounds-3",
+      "source": "background-7.png",
+      "description": "Tranh CC0 với chuyển động pan/zoom nhẹ, lặp 8 giây."
+    },
+    {
+      "key": "scene-8",
+      "kind": "BACKGROUND",
+      "name": "Hầm đá ánh đèn",
+      "category": "Minh họa",
+      "artist": "Nidhoggn",
+      "sourceUrl": "https://opengameart.org/content/backgrounds-3",
+      "source": "background-8.png",
+      "description": "Tranh CC0 với chuyển động pan/zoom nhẹ, lặp 8 giây."
+    },
+    {
+      "key": "scene-9",
+      "kind": "BACKGROUND",
+      "name": "Sân đá cổ",
+      "category": "Minh họa",
+      "artist": "Nidhoggn",
+      "sourceUrl": "https://opengameart.org/content/backgrounds-3",
+      "source": "background-9.png",
+      "description": "Tranh CC0 với chuyển động pan/zoom nhẹ, lặp 8 giây."
+    },
+    {
+      "key": "scene-10",
+      "kind": "BACKGROUND",
+      "name": "Đồng cỏ",
+      "category": "Minh họa",
+      "artist": "Nidhoggn",
+      "sourceUrl": "https://opengameart.org/content/backgrounds-3",
+      "source": "background-10.png",
+      "description": "Tranh CC0 với chuyển động pan/zoom nhẹ, lặp 8 giây."
+    },
+    {
+      "key": "first-snow",
+      "kind": "MUSIC",
+      "name": "First Snow",
+      "category": "Lo-fi",
+      "artist": "Holizna",
+      "sourceUrl": "https://opengameart.org/content/lo-fi-and-chill-collection",
+      "source": "lofi.zip",
+      "member": "Lo-Fi And Chill (Lofi Collection)/01 HoliznaCC0 - First Snow.mp3.mp3",
+      "description": "Trích đoạn tối đa 60 giây, âm lượng chuẩn hóa để lót lời đọc."
+    },
+    {
+      "key": "laundry",
+      "kind": "MUSIC",
+      "name": "Laundry On The Wire",
+      "category": "Lo-fi",
+      "artist": "Holizna",
+      "sourceUrl": "https://opengameart.org/content/lo-fi-and-chill-collection",
+      "source": "lofi.zip",
+      "member": "Lo-Fi And Chill (Lofi Collection)/01 HoliznaCC0 - Laundry On The Wire.mp3.mp3",
+      "description": "Trích đoạn tối đa 60 giây, âm lượng chuẩn hóa để lót lời đọc."
+    },
+    {
+      "key": "dreamed",
+      "kind": "MUSIC",
+      "name": "Everything You Ever Dreamed",
+      "category": "Lo-fi",
+      "artist": "Holizna",
+      "sourceUrl": "https://opengameart.org/content/lo-fi-and-chill-collection",
+      "source": "lofi.zip",
+      "member": "Lo-Fi And Chill (Lofi Collection)/02 HoliznaCC0 - Everything You Ever Dreamed.mp3",
+      "description": "Trích đoạn tối đa 60 giây, âm lượng chuẩn hóa để lót lời đọc."
+    },
+    {
+      "key": "keeping-cool",
+      "kind": "MUSIC",
+      "name": "Keeping Cool",
+      "category": "Lo-fi",
+      "artist": "Holizna",
+      "sourceUrl": "https://opengameart.org/content/lo-fi-and-chill-collection",
+      "source": "lofi.zip",
+      "member": "Lo-Fi And Chill (Lofi Collection)/02 HoliznaCC0 - Keeping Cool.mp3",
+      "description": "Trích đoạn tối đa 60 giây, âm lượng chuẩn hóa để lót lời đọc."
+    },
+    {
+      "key": "snow-drift",
+      "kind": "MUSIC",
+      "name": "Snow Drift",
+      "category": "Lo-fi",
+      "artist": "Holizna",
+      "sourceUrl": "https://opengameart.org/content/lo-fi-and-chill-collection",
+      "source": "lofi.zip",
+      "member": "Lo-Fi And Chill (Lofi Collection)/02 HoliznaCC0 - Snow Drift.mp3",
+      "description": "Trích đoạn tối đa 60 giây, âm lượng chuẩn hóa để lót lời đọc."
+    },
+    {
+      "key": "windows-down",
+      "kind": "MUSIC",
+      "name": "Windows Down",
+      "category": "Lo-fi",
+      "artist": "Holizna",
+      "sourceUrl": "https://opengameart.org/content/lo-fi-and-chill-collection",
+      "source": "lofi.zip",
+      "member": "Lo-Fi And Chill (Lofi Collection)/02 HoliznaCC0 - Windows Down.mp3.mp3",
+      "description": "Trích đoạn tối đa 60 giây, âm lượng chuẩn hóa để lót lời đọc."
+    },
+    {
+      "key": "two-hour-delay",
+      "kind": "MUSIC",
+      "name": "2 Hour Delay",
+      "category": "Lo-fi",
+      "artist": "Holizna",
+      "sourceUrl": "https://opengameart.org/content/lo-fi-and-chill-collection",
+      "source": "lofi.zip",
+      "member": "Lo-Fi And Chill (Lofi Collection)/03 HoliznaCC0 - 2 Hour Delay.mp3",
+      "description": "Trích đoạn tối đa 60 giây, âm lượng chuẩn hóa để lót lời đọc."
+    },
+    {
+      "key": "chills",
+      "kind": "MUSIC",
+      "name": "Chills",
+      "category": "Chillhop",
+      "artist": "Holizna",
+      "source": "chills.mp3",
+      "sourceUrl": "https://opengameart.org/content/chills",
+      "description": "Nhạc không lời CC0, tối đa 60 giây mỗi vòng."
+    },
+    {
+      "key": "mystical-piano",
+      "kind": "MUSIC",
+      "name": "Mystical Piano",
+      "category": "Piano",
+      "artist": "Indieteur",
+      "source": "piano.mp3",
+      "sourceUrl": "https://opengameart.org/content/mystical-piano",
+      "description": "Nhạc không lời CC0, tối đa 60 giây mỗi vòng."
+    },
+    {
+      "key": "sherwood",
+      "kind": "MUSIC",
+      "name": "Sherwood",
+      "category": "Nhẹ nhàng",
+      "artist": "zesona",
+      "source": "sherwood.ogg",
+      "sourceUrl": "https://opengameart.org/content/sherwood",
+      "description": "Nhạc không lời CC0, tối đa 60 giây mỗi vòng."
+    },
+    {
+      "key": "funked-up",
+      "kind": "MUSIC",
+      "name": "Funked Up",
+      "category": "Vui tươi",
+      "artist": "Joth",
+      "source": "funked-up.mp3",
+      "sourceUrl": "https://opengameart.org/content/funked-up",
+      "description": "Nhạc không lời CC0, tối đa 60 giây mỗi vòng."
+    },
+    {
+      "key": "emotional-piano",
+      "kind": "MUSIC",
+      "name": "Emotional Piano",
+      "category": "Piano",
+      "artist": "extenz",
+      "source": "emotional-piano-loop.wav",
+      "sourceUrl": "https://opengameart.org/content/emotional-piano-loop",
+      "description": "Nhạc không lời CC0, tối đa 60 giây mỗi vòng."
+    }
+  ]
+}

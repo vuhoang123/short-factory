@@ -110,3 +110,12 @@ Sau verification đã restart `local:export` với code mới. Web `/health`, `/
 The current browser button follow-up is recorded in [CURRENT_BROWSER_CAPTURE_REPORT](product/CURRENT_BROWSER_CAPTURE_REPORT.md): Chrome/Edge extension capture is the default, and dedicated Chromium login is optional. It adds a durable waiting/upload boundary rather than reusing or extracting browser cookies.
 
 The owner-requested dedicated-browser capture and original-image video flow are recorded in [SOURCE_CAPTURE_REPORT](product/SOURCE_CAPTURE_REPORT.md), with pinned [open-source research](research/VIDEO_READER_REFERENCES.md). This adds capture-job cancellation/recovery, source-image authorization/takedown and real screenshot rendering. It does not change the Phase 4 publishing approval gates.
+
+
+## Studio maker follow-up — 3 November 2026
+
+The owner-authorized local Studio enhancements are recorded in [STUDIO_MAKER_REPORT.md](product/STUDIO_MAKER_REPORT.md): shared import/editor flow, original-image draft preview, local MP4 backgrounds/WAV music, caption controls and workspace presets. The report contains current test/media evidence and the additive preset migration. This preserves the Phase 6 reliability mechanisms and does not change external publishing gates.
+
+## UI/UX follow-up — 3 November 2026
+
+The app-wide layout and Studio workflow corrections are recorded in [UI_UX_AUDIT_REPORT.md](product/UI_UX_AUDIT_REPORT.md), with desktop/mobile evidence and regression checks for 15 screens at three widths. This UI-only follow-up preserves Phase 6 job reliability, workspace authorization and external approval gates.

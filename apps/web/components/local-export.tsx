@@ -13,6 +13,9 @@ import { CommentPicker } from './comment-picker';
 import { VoiceLibrary } from './voice-library';
 import { commentPlanSchema } from '../lib/comment-selection';
 import { BrowserCapture, SourceImagePreview } from './source-capture';
+import { StoryStudio } from './story-studio';
+import { studioItemsSchema } from '../lib/studio';
+import { useResource } from '../lib/use-resource';
 
 const channelsSchema = paginated(channelSchema);
 const commentsSchema = paginated(commentSchema.extend({ sensitiveFlags: z.array(z.string()).optional() }));
@@ -353,17 +356,22 @@ export function LocalExport({ embedded = false }: { embedded?: boolean }) {
 
   const runPanel = progress.runId && <div className="studio-run-content"><p className="field-help">Mã lượt tạo: {progress.runId}</p>{run ? <><div className="studio-run-status"><span className={`badge ${run.status === 'SUCCEEDED' ? 'positive' : run.status.startsWith('FAILED') || run.status.startsWith('BLOCKED') ? 'negative' : 'neutral'}`}>{run.status}</span><span>{run.currentStage?.replaceAll('_', ' ') ?? 'Đang chờ worker'}</span></div><progress max={1} value={run.renderJob?.progress ?? 0} aria-label="Tiến độ tạo video" /><ol className="stage-list">{run.stages.map((stage) => <li key={stage.name} className={stage.status === 'SUCCEEDED' ? 'done' : stage.status === 'RUNNING' ? 'active' : ''}><span>{stage.name.replaceAll('_', ' ')}</span><span>{stage.status}</span></li>)}</ol>{runErrorExplanation(run.errorCode, run.status) && <div className="notice error">{runErrorExplanation(run.errorCode, run.status)}</div>}{mayAdmin(role) && run.status.startsWith('FAILED') && <button className="button secondary small" onClick={() => void retryRun()} disabled={busy}>Thử lại lượt tạo lỗi</button>}{canEdit && cancellableStatuses.has(run.status) && (confirmCancellation ? <div className="notice warning"><p>Hủy lượt này sẽ dừng xử lý. Video đang làm dở sẽ không được hoàn tất từ lượt này.</p><div className="phase5-actions"><button className="button secondary small" onClick={() => void cancelRun()} disabled={busy}>Xác nhận hủy</button><button className="text-button" onClick={() => setConfirmCancellation(false)} disabled={busy}>Giữ lượt tạo</button></div></div> : <button className="button secondary small" onClick={() => setConfirmCancellation(true)} disabled={busy}>Hủy lượt tạo</button>)}</> : <p role="status">Đang tải lượt tạo…</p>}<button className="text-button" onClick={() => setRunRevision((value) => value + 1)}>Tải lại tiến độ</button></div>;
 
+  if (embedded && post && candidate?.status === 'APPROVED' && right?.reviewStatus === 'APPROVED') return <>
+    <div className="notice success studio-import-complete"><strong>Đã nhập và duyệt nguồn.</strong> Tiếp tục chọn giọng, xem trước và dựng video ở cùng bàn biên tập.<button className="text-button" onClick={newExport} disabled={busy}>Nhập bài khác</button></div>
+    <ImportedStudio postId={post.id} initialRunId={progress.runId} />
+  </>;
+
   return <>
-    <div className="page-heading"><div><span className="eyebrow">LOCAL · FACEBOOK / THREADS</span>{embedded ? <h2>Xuất video về máy</h2> : <h1>Xuất video về máy</h1>}<p>Dán link nguồn, thêm nội dung được phép sử dụng, duyệt rồi tải video MP4.</p></div>{progress.postId && <button className="button secondary small" onClick={newExport} disabled={busy}>Bắt đầu bài khác</button>}</div>
-    <div className="notice"><span>Chụp bằng trình duyệt riêng để video dùng ảnh post/comment gốc. Có thể dùng phần nhập thủ công bên dưới khi bạn đã có nội dung được phép sử dụng.</span></div>
+    {!embedded ? <div className="page-heading"><div><span className="eyebrow">LOCAL · FACEBOOK / THREADS</span><h1>Xuất video về máy</h1><p>Dán link nguồn, thêm nội dung được phép sử dụng, duyệt rồi tải video MP4.</p></div>{progress.postId && <button className="button secondary small" onClick={newExport} disabled={busy}>Bắt đầu bài khác</button>}</div> : progress.postId && <div className="phase5-actions"><button className="button secondary small" onClick={newExport} disabled={busy}>Bắt đầu bài khác</button></div>}
+    {!embedded && <div className="notice"><span>Mở bài bằng Chrome/Edge đang dùng và chụp qua extension để giữ ảnh post/comment gốc. Có thể dùng phần nhập thủ công bên dưới khi bạn đã có nội dung được phép sử dụng.</span></div>}
     {error && <ErrorNotice message={error} retry={() => { setError(''); setConfigRevision((value) => value + 1); setSourceRevision((value) => value + 1); setRunRevision((value) => value + 1); setVideoRevision((value) => value + 1); }} />}
     {notice && <div className="notice success" role="status">{notice}</div>}
     {storageUnavailable && <div className="notice warning">Không đọc hoặc lưu được tiến độ phiên trong trình duyệt. Giữ trang đang mở, ghi lại mã lượt tạo để người quản trị kiểm tra; video hoàn thành vẫn có trong Studio.</div>}
     {(!canEdit || !canReview) && <div className="notice warning">Vai trò hiện tại: {role}. Editor có thể nhập/tạo video; Reviewer có thể duyệt. OWNER hoặc ADMIN có thể thực hiện toàn bộ luồng. Các bước thiếu quyền cần người có vai trò phù hợp xử lý trong Library/Studio.</div>}
-    <RenderHistory revision={historyRevision} onOpen={openHistory} busy={busy} />
+    {!embedded && <RenderHistory revision={historyRevision} onOpen={openHistory} busy={busy} />}
     {(loading && !channels.length) || !restored ? <p className="loading-state" role="status">Đang tải cấu hình local…</p> : !channels.length ? <section className="panel form-panel"><EmptyState title="Chưa có kênh nội dung">Tạo một kênh với ngôn ngữ và ngưỡng chọn bài phù hợp trước khi nhập.</EmptyState><Link className="button" href="/channels">Tạo kênh nội dung</Link></section> : <>
-      {!progress.postId && <><label>Kênh cho bài chụp<select value={channelId} onChange={event => saveProgress({ channelId: event.target.value })}>{channels.map(channel => <option key={channel.id} value={channel.id}>{channel.name}</option>)}</select></label><BrowserCapture channelId={channelId} disabled={!canEdit || busy} onImported={postId => { saveProgress({ postId, channelId, commentIds: undefined, commentMode: 'TOP_REACTIONS' }); setReviewedSource(false); setNotice('Đã lưu ảnh chụp và nội dung. Xem từng ảnh, khai báo quyền rồi duyệt để tạo video.'); }} /></>}
-      {!progress.postId && <section className="panel form-panel studio-setup"><h2>Hoặc nhập văn bản thủ công</h2><p className="muted">Cách này dựng thẻ chữ từ văn bản, không tạo ảnh giao diện gốc. Dán cả khối hoặc mở file bình luận một lần.</p>
+      {!progress.postId && <><label className="studio-import-channel">Kênh cho bài chụp<select value={channelId} onChange={event => saveProgress({ channelId: event.target.value })}>{channels.map(channel => <option key={channel.id} value={channel.id}>{channel.name}</option>)}</select></label><BrowserCapture channelId={channelId} disabled={!canEdit || busy} onImported={postId => { saveProgress({ postId, channelId, commentIds: undefined, commentMode: 'TOP_REACTIONS' }); setReviewedSource(false); setNotice('Đã lưu ảnh chụp và nội dung. Xem từng ảnh, khai báo quyền rồi duyệt để tạo video.'); }} /></>}
+      {!progress.postId && <details className="panel form-panel studio-setup studio-manual-import" open={!embedded}><summary>Hoặc nhập văn bản thủ công</summary><p className="muted">Cách này dựng thẻ chữ từ văn bản, không tạo ảnh giao diện gốc. Dán cả khối hoặc mở file bình luận một lần.</p>
         <form className="form-stack" onSubmit={importPost}>
           <label>Link bài Facebook/Threads<input name="canonicalUrl" type="url" required maxLength={2048} placeholder="https://www.threads.com/@.../post/..." /></label>
           <label>Tiêu đề<input name="title" maxLength={300} /></label>
@@ -380,7 +388,7 @@ export function LocalExport({ embedded = false }: { embedded?: boolean }) {
           <label className="checkbox-label"><input type="checkbox" name="attested" required /><span>Tôi có thẩm quyền nhập và tái sử dụng bài cùng các bình luận đã dán; đã kiểm tra thông tin cá nhân.</span></label>
           <button className="button" disabled={busy || !canEdit}>{busy ? 'Đang lưu…' : 'Lưu bài để kiểm tra'}</button>
         </form>
-      </section>}
+      </details>}
       {progress.postId && !post && <p className="loading-state" role="status">Đang tải bản nội dung đã lưu…</p>}
       {progress.runId && !post && <section className="panel form-panel"><h2>Theo dõi lượt đã lưu</h2>{runPanel}</section>}
       {post && <div className="studio-grid">
@@ -416,4 +424,12 @@ export function LocalExport({ embedded = false }: { embedded?: boolean }) {
       </section>}
     </>}
   </>;
+}
+
+function ImportedStudio({ postId, initialRunId }: { postId: string; initialRunId?: string }) {
+  const content = useResource(`/studio/content/${postId}`, studioItemsSchema);
+  const item = content.data?.items[0];
+  if (content.error) return <ErrorNotice message={content.error} retry={content.reload} />;
+  if (!item) return <p role="status">Đang mở bàn dựng cho bài vừa nhập…</p>;
+  return <StoryStudio key={postId} source={item} initialRunId={initialRunId ?? item.run?.id} embedded />;
 }

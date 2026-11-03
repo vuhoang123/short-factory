@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shorts Factory — Tạo video</title>
+<style>
+:root{font-family:Inter,"Segoe UI",Arial,sans-serif;color:#19304b;background:#eef3fa;font-synthesis:none;--blue:#215bc0;--navy:#183a65;--muted:#586a82;--line:#dce5f1}
+*{box-sizing:border-box}body{margin:0;min-height:100vh}button,input,select{font:inherit}button,a,input,select,summary{outline-offset:4px}button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:3px solid #759ff0}button{cursor:pointer}a{color:inherit;text-decoration:none}::selection{background:#bdd2fa;color:#142f55}input{caret-color:var(--blue)}::-webkit-scrollbar{width:9px}::-webkit-scrollbar-thumb{background:#a5b7d0;border-radius:8px}::-webkit-scrollbar-track{background:#eef3fa}
+.app{display:grid;grid-template-columns:208px minmax(0,1fr);min-height:900px}.rail{background:var(--navy);color:white;padding:34px 20px 23px;display:flex;flex-direction:column}.brand{font-size:21px;font-weight:750;line-height:1.25;letter-spacing:-.6px;padding:0 12px 44px}.brand span{display:block;font-size:12px;letter-spacing:.2px;font-weight:450;color:#c8d7ed;margin-top:8px}.nav{display:flex;flex-direction:column;gap:7px}.nav a{display:flex;align-items:center;gap:12px;padding:14px 13px;border-radius:8px;color:#d8e4f5;font-size:14px;font-weight:550}.nav a.active{background:#fff;color:var(--navy)}.nav a:hover{background:#284e7d;color:#fff}.nav a.active:hover{background:#e5eeff;color:var(--navy)}svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}.rail-bottom{margin-top:auto;border-top:1px solid #45618a;padding:21px 12px 0;font-size:13px;color:#c8d7ed;line-height:1.6}.rail-bottom strong{display:block;color:#fff;font-size:14px;font-weight:600}.local-dot{width:6px;height:6px;display:inline-block;background:#a5c3f5;border-radius:50%;margin:0 7px 2px 0}
+main{padding:36px 42px 30px;max-width:1400px;width:100%;margin:auto}.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:31px}.top h1{font-size:28px;letter-spacing:-.7px;margin:0 0 8px;font-weight:700}.top p{margin:0;color:var(--muted);font-size:14px}.help{font-size:13px;color:#365d91;display:flex;align-items:center;gap:7px;padding:10px 0}.help svg{width:17px;height:17px}.stepper{display:flex;align-items:center;margin:0 0 31px;padding:0;list-style:none;gap:0}.stepper li{display:flex;align-items:center;font-size:14px;color:#67768c;white-space:nowrap}.stepper li:not(:last-child){flex:1}.stepper li:not(:last-child):after{content:"";height:1px;background:#cfdbea;flex:1;margin:0 20px}.step-no{width:29px;height:29px;display:grid;place-items:center;border:1px solid #b9c8db;border-radius:50%;margin-right:9px;font-size:12px;font-weight:600;background:#eef3fa}.stepper .current{color:#174caa;font-weight:650}.current .step-no{background:var(--blue);border-color:var(--blue);color:#fff}
+.workspace{display:grid;grid-template-columns:minmax(0,1fr) 288px;gap:27px;align-items:start}.source{background:#fff;border-radius:14px;box-shadow:0 8px 30px rgba(24,58,101,.055);overflow:hidden;min-height:629px;display:flex;flex-direction:column}.source-body{padding:30px 32px 0}.section-title{display:flex;justify-content:space-between;align-items:center;gap:15px}.section-title h2{font-size:21px;letter-spacing:-.35px;margin:0}.empty-state{font-size:12px;color:#6c7b90}.intro{font-size:14px;color:var(--muted);line-height:1.7;margin:13px 0 27px;max-width:60ch}.field-label{display:block;font-size:14px;font-weight:600;margin-bottom:10px}.link-input{width:100%;border:1px solid #a8bcd9;border-radius:7px;background:#fff;height:55px;padding:0 15px;font-size:14px;color:#19304b;box-shadow:0 2px 4px rgba(24,58,101,.025)}.link-input::placeholder{color:#68788e;opacity:1}.field-hint{color:#64738a;font-size:12px;margin:9px 0 28px}.process{margin:0;padding:21px 0 10px;list-style:none;border-top:1px solid var(--line)}.process li{display:flex;gap:12px;margin-bottom:20px;line-height:1.45}.process svg{margin-top:2px;width:18px;height:18px;color:#5075a7}.process strong{font-size:14px;font-weight:600;display:block;margin-bottom:3px}.process p{font-size:13px;margin:0;color:var(--muted);max-width:52ch}.other{display:flex;align-items:center;gap:13px;font-size:12px;color:#6a7890;padding:2px 0 20px}.text-link{color:#2155a2;text-decoration:underline;text-decoration-color:#adc2e2;text-underline-offset:4px;cursor:pointer}.text-link:hover{color:#123c82;text-decoration-color:currentColor}.advanced{border-top:1px solid var(--line);font-size:13px;margin-bottom:24px;color:#49617e}.advanced summary{cursor:pointer;padding-top:17px;min-height:35px;width:max-content}.advanced .options{padding-top:16px;display:flex;gap:12px;align-items:center}.advanced select{height:38px;min-width:160px;border:1px solid #b9c8da;border-radius:6px;background:#fff;color:#253f61;padding:0 10px}.action-tray{margin-top:auto;background:#edf3fd;padding:23px 32px;display:flex;align-items:center;justify-content:space-between;gap:20px}.action-tray strong{font-size:14px;font-weight:650;display:block;margin-bottom:5px}.action-tray p{font-size:12px;line-height:1.5;color:#516986;margin:0;max-width:27ch}.primary{background:var(--blue);border:0;color:white;font-size:14px;font-weight:650;border-radius:7px;min-height:48px;padding:0 19px;display:flex;align-items:center;gap:12px;white-space:nowrap}.primary:hover{background:#164b9f}.primary svg{width:17px;height:17px}.page-foot{display:flex;justify-content:space-between;align-items:center;margin-top:17px;font-size:12px;color:#61738c}.next-disabled{border:0;background:transparent;color:#6c7a8e;font-size:13px;cursor:not-allowed;padding:8px 0}.next-disabled span{margin-left:9px}
+.preview{padding-top:3px}.preview-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:15px}.preview-head h2{font-size:14px;font-weight:650;margin:0}.preview-head span{font-size:12px;color:#60738e}.video{background:#dce6f5;aspect-ratio:9/16;border-radius:12px;position:relative;overflow:hidden;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:23px}.video-inner{height:185px;width:100%;border:1px dashed #98afcf;border-radius:5px;background:#edf3fc;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#50729d}.video-inner svg{width:35px;height:35px;margin-bottom:18px;stroke-width:1.3}.video-inner p{font-size:13px;line-height:1.6;margin:0;max-width:18ch}.video-caption{font-size:11px;color:#527097;margin-top:17px;line-height:1.6}.video-bottom{position:absolute;bottom:22px;left:22px;right:22px;border-top:1px solid #b6c8e1;padding-top:12px;display:flex;justify-content:space-between;font-size:10px;color:#4f6d94;letter-spacing:.2px}.preview-note{margin:18px 2px 0;font-size:12px;line-height:1.7;color:#5b6d85}.preview-note strong{color:#354f70;font-weight:600}.export-format{margin:15px 2px 0;padding-top:14px;border-top:1px solid #d2dfef;display:flex;justify-content:space-between;font-size:12px;color:#61738b}.export-format strong{color:#385576;font-weight:600}
+.source-body{padding-top:26px}.intro{margin-bottom:21px}.field-hint{margin-bottom:22px}.process{padding-bottom:0}.process li{margin-bottom:16px}.process p{max-width:none}.other{padding-bottom:18px}.advanced{margin-bottom:18px}.action-tray p{max-width:none}
+@media(max-width:1100px){main{padding:30px 25px}.workspace{grid-template-columns:minmax(0,1fr) 240px;gap:20px}.source-body{padding:27px 24px 0}.action-tray{padding:22px 24px;flex-direction:column;align-items:stretch}.action-tray p{max-width:100%}.primary{justify-content:center}.app{grid-template-columns:180px}.rail{padding-left:14px;padding-right:14px}}
+@media(max-width:800px){.app{display:block}.rail{padding:20px 22px;display:block}.brand{padding:0 0 20px;font-size:19px}.brand span,.rail-bottom{display:none}.nav{flex-direction:row;gap:3px}.nav a{padding:11px;font-size:12px;gap:6px}.nav svg{width:17px;height:17px}main{padding:25px 20px}.top{margin-bottom:25px}.top h1{font-size:25px}.help{display:none}.stepper{margin-bottom:25px}.stepper li{font-size:12px}.stepper li:not(:last-child):after{margin:0 10px}.step-no{width:24px;height:24px;margin-right:5px}.workspace{grid-template-columns:1fr}.preview{max-width:288px;margin:10px auto;width:100%}.page-foot{gap:20px}.source{min-height:0}.action-tray{margin-top:0;flex-direction:row}.section-title{align-items:baseline}.empty-state{font-size:11px}}
+</style>
+</head>
+<body>
+<div class="app">
+<aside class="rail">
+  <a class="brand" href="#">Shorts Factory<span>Không gian sáng tạo của bạn</span></a>
+  <nav class="nav" aria-label="Điều hướng chính">
+    <a href="#" class="active" aria-current="page"><svg viewBox="0 0 24 24"><path d="M12 4v16M4 12h16"/></svg>Tạo video</a>
+    <a href="#"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 9 5 3-5 3Z"/></svg>Video của tôi</a>
+    <a href="#"><svg viewBox="0 0 24 24"><path d="M4 6h6l2 2h8v12H4Z"/><path d="M4 6V4h6l2 2h8v2"/></svg>Nội dung</a>
+    <a href="#"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="2" fill="#183a65"/><circle cx="16" cy="17" r="2" fill="#183a65"/></svg>Cài đặt</a>
+  </nav>
+  <div class="rail-bottom"><strong><span class="local-dot"></span>Chạy trên máy của bạn</strong>Video được xuất thành tệp MP4.</div>
+</aside>
+<main>
+  <header class="top"><div><h1>Tạo video mới</h1><p>Từ bài viết bạn chọn đến một video có lời đọc.</p></div><a href="#" class="help"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 5 .2c0 1.8-2.5 2-2.5 3.8M12 16h.01"/></svg>Hướng dẫn nhanh</a></header>
+  <ol class="stepper" aria-label="Các bước tạo video">
+    <li class="current" aria-current="step"><span class="step-no">1</span>Nguồn</li>
+    <li><span class="step-no">2</span>Lời đọc</li>
+    <li><span class="step-no">3</span>Giao diện</li>
+    <li><span class="step-no">4</span>Xuất video</li>
+  </ol>
+  <div class="workspace">
+    <div>
+      <section class="source" aria-labelledby="source-heading">
+        <div class="source-body">
+          <div class="section-title"><h2 id="source-heading">Bắt đầu từ một bài viết</h2><span class="empty-state">Chưa có nguồn</span></div>
+          <p class="intro">Chọn ảnh bài viết và bình luận để đưa vào video của bạn.</p>
+          <label class="field-label" for="source-url">Liên kết bài viết</label>
+          <input class="link-input" id="source-url" type="url" placeholder="Dán liên kết Facebook hoặc Threads tại đây" autocomplete="off">
+          <p class="field-hint">Bài viết sẽ được mở trong trình duyệt bạn đang sử dụng.</p>
+          <ul class="process">
+            <li><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 8h18M6 6h.01M9 6h.01"/></svg><div><strong>Chụp khi bạn sẵn sàng</strong><p>Đăng nhập trong Chrome hoặc Edge, rồi bấm tiện ích Shorts Factory để chụp.</p></div></li>
+            <li><svg viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6Z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg><div><strong>Xem lại ảnh và xác nhận quyền sử dụng</strong><p>Duyệt nguồn, chọn bình luận và ẩn thông tin cá nhân trước khi tạo video.</p></div></li>
+          </ul>
+          <div class="other">Hoặc <a href="#" class="text-link">Nhập nội dung / tải ảnh có sẵn</a></div>
+          <details class="advanced"><summary>Tùy chọn nâng cao</summary><div class="options"><label for="browser">Trình duyệt chụp</label><select id="browser"><option>Chrome / Edge</option><option>Trình duyệt riêng</option></select></div></details>
+        </div>
+        <div class="action-tray"><div><strong>Tiếp theo: mở bài viết</strong><p>Ảnh chỉ được chụp khi bạn bấm tiện ích.</p></div><button class="primary" type="button">Mở bài để chụp<svg viewBox="0 0 24 24"><path d="M5 12h14m-5-5 5 5-5 5"/></svg></button></div>
+      </section>
+      <div class="page-foot"><span>Nguồn sẽ được lưu sau khi bạn duyệt ảnh.</span><button class="next-disabled" disabled>Lời đọc<span>→</span></button></div>
+    </div>
+    <aside class="preview" aria-label="Xem trước video">
+      <div class="preview-head"><h2>Video của bạn</h2><span>9:16</span></div>
+      <div class="video">
+        <div class="video-inner"><svg viewBox="0 0 36 36"><rect x="4" y="5" width="28" height="26" rx="2"/><circle cx="12" cy="13" r="2.5"/><path d="m5 26 9-8 6 5 5-4 6 6"/></svg><p>Ảnh nguồn sẽ xuất hiện ở đây</p></div>
+        <div class="video-caption">Thêm nguồn để bắt đầu<br>ghép ảnh cùng lời đọc.</div>
+        <div class="video-bottom"><span>SHORTS FACTORY</span><span>XEM TRƯỚC</span></div>
+      </div>
+      <p class="preview-note"><strong>Giữ hình ảnh gốc của bài viết.</strong><br>Bạn sẽ thêm lời đọc, chọn nền và nhạc ở các bước tiếp theo.</p>
+      <div class="export-format"><span>Định dạng đầu ra</span><strong>MP4 · Lưu về máy</strong></div>
+    </aside>
+  </div>
+</main>
+</div>
+</body>
+</html>

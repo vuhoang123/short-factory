@@ -9,8 +9,10 @@ import { mutationIdentity } from './idempotency.js';
 import { selectTopComments } from '@shorts-factory/media';
 import { customVoiceProfile, validateVoiceReference, type VoiceProfile } from '@shorts-factory/media';
 import { z } from 'zod';
+import { readCuratedCatalog, readCuratedFile } from '@shorts-factory/media';
 import { sourceImageMetadataSchema, assertSourceImageBindings } from '@shorts-factory/media';
 import { createHash } from 'node:crypto';
+import { prepareStudioMedia, studioPresetSchema } from '@shorts-factory/media';
 import { audioRequestSchema, backgroundUploadSchema, cancelRunSchema, editStorySchema, productionCreateSchema, productionRunQuerySchema, regenerateStorySchema, renderRequestSchema, storyRenderRequestSchema, videoReviewSchema } from './production.validation.js';
 
 function objectStore() { return new LocalObjectStore(path.resolve(process.env.STORAGE_LOCAL_ROOT ?? '.data/objects')); }
@@ -88,10 +90,15 @@ export class ProductionService {
 
   async uploadBackground(request: Request, rawBytes: unknown) {
     const context = await this.auth.context(request, editRoles);
+    if (request.header('content-type')?.split(';')[0]?.trim() === 'video/mp4') return this.uploadLibraryMedia(request, rawBytes, 'BACKGROUND');
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(request.header('content-type')?.split(';')[0]?.trim() ?? '')) throw new ApiError(400, 'BACKGROUND_FORMAT_INVALID', 'Upload a PNG, JPEG, or WebP background image.');
     if (!Buffer.isBuffer(rawBytes)) throw new ApiError(400, 'BACKGROUND_FILE_REQUIRED', 'Upload a background image as the request body.');
-    const headers = backgroundUploadSchema.parse({ name: request.header('x-asset-name'), basis: request.header('x-rights-basis'), attested: request.header('x-rights-attested'), evidence: request.header('x-rights-evidence') || undefined });
-    const prepared = await prepareBackgroundImage(rawBytes);
+    let name: string; let evidence: string;
+    try { name = request.header('x-asset-encoding') === 'uri' ? decodeURIComponent(request.header('x-asset-name') ?? '') : request.header('x-asset-name') ?? ''; evidence = request.header('x-asset-encoding') === 'uri' ? decodeURIComponent(request.header('x-rights-evidence') ?? '') : request.header('x-rights-evidence') ?? ''; }
+    catch { throw new ApiError(400, 'MEDIA_HEADERS_INVALID', 'Tên file hoặc thông tin quyền không hợp lệ.'); }
+    const headers = backgroundUploadSchema.parse({ name, basis: request.header('x-rights-basis'), attested: request.header('x-rights-attested'), evidence: evidence || undefined });
+    let prepared: Awaited<ReturnType<typeof prepareBackgroundImage>>;
+    try { prepared = await prepareBackgroundImage(rawBytes); } catch { throw new ApiError(400, 'BACKGROUND_FORMAT_INVALID', 'Chọn ảnh PNG, JPEG hoặc WebP hợp lệ dưới 20 MB.'); }
     const object = await objectStore().put(context.workspaceId, prepared.bytes);
     const requestInput = { checksum: object.checksum, size: object.size, name: headers.name, basis: headers.basis, evidence: headers.evidence ?? null };
     return this.mutation(request, context, '/backgrounds', requestInput, async (tx) => {
@@ -104,6 +111,114 @@ export class ProductionService {
       await this.audit(tx, context, 'BACKGROUND_UPLOADED', 'MediaAsset', asset.id, { checksum: object.checksum, basis: headers.basis });
       return { id: asset.id, mimeType: prepared.mimeType, width: prepared.width, height: prepared.height, sizeBytes: object.size, url: `/api/v1/media/${asset.id}` };
     });
+  }
+
+  async music(request: Request) {
+    const { workspaceId } = await this.auth.context(request);
+    const items = await this.db.mediaAsset.findMany({ where: { workspaceId, kind: 'MUSIC' }, orderBy: { createdAt: 'desc' }, take: 100 });
+    return { items: items.filter(validBackgroundRights).map(asset => ({ id: asset.id, mimeType: asset.mimeType, metadata: asset.metadata, url: `/api/v1/media/${asset.id}` })) };
+  }
+
+  async curatedMedia(request: Request) {
+    await this.auth.context(request);
+    return { items: (await readCuratedCatalog()).map(({ file: _file, thumbnail: _thumbnail, ...entry }) => entry) };
+  }
+
+  async previewCuratedMedia(request: Request, key: string, response: Response, thumbnail: boolean) {
+    await this.auth.context(request);
+    let asset: Awaited<ReturnType<typeof readCuratedFile>>;
+    try { asset = await readCuratedFile(key, thumbnail); }
+    catch { return notFound(); }
+    response.setHeader('Cache-Control', 'private, no-store');
+    return new Promise<void>((resolve, reject) => response.sendFile(path.basename(asset.filePath), { root: path.dirname(asset.filePath) }, error => error ? reject(error) : resolve()));
+  }
+
+  async installCuratedMedia(request: Request, raw: unknown) {
+    const context = await this.auth.context(request, editRoles);
+    const input = z.object({ keys: z.array(z.string().regex(/^[a-z0-9-]{1,80}$/)).min(1).max(40) }).strict().parse(raw);
+    if (new Set(input.keys).size !== input.keys.length) throw new ApiError(400, 'CURATED_KEYS_DUPLICATED', 'Mỗi tài nguyên chỉ chọn một lần.');
+    const prepared: Array<{ entry: Awaited<ReturnType<typeof readCuratedFile>>['entry']; media: { mimeType: string; durationMs: number; width?: number; height?: number }; object: Awaited<ReturnType<ReturnType<typeof objectStore>['put']>> }> = [];
+    for (const key of input.keys) {
+      let asset: Awaited<ReturnType<typeof readCuratedFile>>;
+      try { asset = await readCuratedFile(key); }
+      catch { throw new ApiError(409, 'CURATED_MEDIA_UNAVAILABLE', 'Bộ tài nguyên chưa sẵn sàng hoặc đã thay đổi. Chạy pnpm local:media:setup.'); }
+      const media = await prepareStudioMedia(asset.bytes, asset.entry.kind, asset.entry.mimeType);
+      const object = await objectStore().put(context.workspaceId, media.bytes);
+      const { bytes: _bytes, ...metadata } = media;
+      prepared.push({ entry: asset.entry, media: metadata, object });
+    }
+    return this.mutation(request, context, '/studio-assets', input, async tx => {
+      const items: Array<{ key: string; kind: string; id: string }> = [];
+      for (const { entry, media, object } of prepared) {
+        const old = await tx.mediaAsset.findUnique({ where: { workspaceId_storageKey: { workspaceId: context.workspaceId, storageKey: object.storageKey } } });
+        if (old && (old.kind !== entry.kind || !validBackgroundRights(old))) throw new ApiError(409, 'MEDIA_ASSET_CONFLICT', 'Tài nguyên trùng với file có loại hoặc quyền khác.');
+        const asset = old ?? await tx.mediaAsset.create({ data: { workspaceId: context.workspaceId, kind: entry.kind, mimeType: media.mimeType, checksum: object.checksum, storageKey: object.storageKey,
+          metadata: { name: entry.name, category: entry.category, artist: entry.artist, sourceUrl: entry.sourceUrl, license: entry.license, licenseUrl: entry.licenseUrl, curatedKey: entry.key, durationMs: media.durationMs, sizeBytes: object.size, ...(typeof media.width === 'number' && typeof media.height === 'number' ? { width: media.width, height: media.height } : {}) },
+          rightsMetadata: { basis: 'LICENSED', approved: true, attested: true, commercialAllowed: true, evidence: `${entry.license} · ${entry.sourceUrl} · verified ${entry.verifiedAt}`, importedById: context.userId },
+        } });
+        if (!old) await this.audit(tx, context, 'CURATED_MEDIA_IMPORTED', 'MediaAsset', asset.id, { key: entry.key, license: entry.license });
+        items.push({ key: entry.key, kind: entry.kind, id: asset.id });
+      }
+      return { items };
+    });
+  }
+
+  async uploadMusic(request: Request, bytes: unknown) { return this.uploadLibraryMedia(request, bytes, 'MUSIC'); }
+
+  private async uploadLibraryMedia(request: Request, rawBytes: unknown, kind: 'BACKGROUND' | 'MUSIC') {
+    const context = await this.auth.context(request, editRoles);
+    if (!Buffer.isBuffer(rawBytes)) throw new ApiError(400, 'MEDIA_FILE_REQUIRED', 'Chọn file MP4 H.264 cho nền hoặc WAV PCM16 cho nhạc.');
+    let name: string; let evidence: string;
+    try { name = request.header('x-asset-encoding') === 'uri' ? decodeURIComponent(request.header('x-asset-name') ?? '') : request.header('x-asset-name') ?? ''; evidence = request.header('x-asset-encoding') === 'uri' ? decodeURIComponent(request.header('x-rights-evidence') ?? '') : request.header('x-rights-evidence') ?? ''; }
+    catch { throw new ApiError(400, 'MEDIA_HEADERS_INVALID', 'Tên file hoặc thông tin quyền không hợp lệ.'); }
+    const headers = backgroundUploadSchema.parse({ name, basis: request.header('x-rights-basis'), attested: request.header('x-rights-attested'), evidence: evidence || undefined });
+    let prepared: Awaited<ReturnType<typeof prepareStudioMedia>>;
+    try { prepared = await prepareStudioMedia(rawBytes, kind, request.header('content-type')?.split(';')[0]?.trim() ?? ''); }
+    catch { throw new ApiError(400, 'MEDIA_UPLOAD_INVALID', 'Dùng MP4 H.264 1–300 giây, tối đa 4K/60fps hoặc WAV PCM16 1–600 giây; file dưới 20 MB.'); }
+    const object = await objectStore().put(context.workspaceId, prepared.bytes);
+    return this.mutation(request, context, kind === 'MUSIC' ? '/music' : '/backgrounds', { checksum: object.checksum, ...headers }, async tx => {
+      const existing = await tx.mediaAsset.findUnique({ where: { workspaceId_storageKey: { workspaceId: context.workspaceId, storageKey: object.storageKey } } });
+      if (existing && (existing.kind !== kind || !validBackgroundRights(existing))) throw new ApiError(409, 'MEDIA_ASSET_CONFLICT', 'File này đã lưu với loại hoặc quyền khác. Chọn một file mới.');
+      const asset = existing ?? await tx.mediaAsset.create({ data: {
+        workspaceId: context.workspaceId, kind, storageKey: object.storageKey, checksum: object.checksum, mimeType: prepared.mimeType,
+        metadata: { name: headers.name, durationMs: prepared.durationMs, sizeBytes: object.size, ...('width' in prepared ? { width: prepared.width, height: prepared.height } : {}) },
+        rightsMetadata: { basis: headers.basis, attested: true, approved: true, commercialAllowed: true, evidence: headers.evidence ?? null, uploadedById: context.userId },
+      } });
+      await this.audit(tx, context, `${kind}_UPLOADED`, 'MediaAsset', asset.id);
+      return { id: asset.id, url: `/api/v1/media/${asset.id}`, mimeType: asset.mimeType };
+    });
+  }
+
+  async presets(request: Request) {
+    const { workspaceId } = await this.auth.context(request);
+    return { items: await this.db.studioPreset.findMany({ where: { workspaceId }, orderBy: { updatedAt: 'desc' }, take: 100 }) };
+  }
+
+  async savePreset(request: Request, raw: unknown) {
+    const context = await this.auth.context(request, editRoles);
+    const input = studioPresetSchema.parse(raw);
+    if (!await this.voiceProfile(context.workspaceId, input.settings.voiceProfileId)) throw new ApiError(400, 'VOICE_PROFILE_INVALID', 'Chọn giọng đang khả dụng.');
+    return this.mutation(request, context, '/studio-presets', input, async tx => {
+      await this.assertPresentationAssets(context.workspaceId, input.settings, tx);
+      const preset = await tx.studioPreset.upsert({ where: { workspaceId_name: { workspaceId: context.workspaceId, name: input.name } }, create: { workspaceId: context.workspaceId, name: input.name, settings: input.settings }, update: { settings: input.settings } });
+      await this.audit(tx, context, 'STUDIO_PRESET_SAVED', 'StudioPreset', preset.id);
+      return { id: preset.id, name: preset.name, settings: input.settings };
+    });
+  }
+
+  private async assertPresentationAssets(workspaceId: string, settings: { backgroundAssetId: string | null; mediaSettings?: ProductionInput['mediaSettings'] }, db: Prisma.TransactionClient = this.db) {
+    if (settings.backgroundAssetId) {
+      const asset = await db.mediaAsset.findFirst({ where: { id: settings.backgroundAssetId, workspaceId, kind: 'BACKGROUND' } });
+      if (!asset || !validBackgroundRights(asset)) throw new ApiError(409, 'BACKGROUND_RIGHTS_INVALID', 'Chọn nền có quyền sử dụng trong workspace.');
+      if (asset.mimeType === 'video/mp4') {
+        const meta = z.object({ durationMs: z.number().positive() }).safeParse(asset.metadata);
+        if (!meta.success || (settings.mediaSettings?.backgroundStartSec ?? 0) * 1000 >= meta.data.durationMs) throw new ApiError(400, 'BACKGROUND_START_INVALID', 'Điểm bắt đầu phải nằm trong video nền.');
+      }
+    }
+    if (settings.mediaSettings?.musicAssetId) {
+      const asset = await db.mediaAsset.findFirst({ where: { id: settings.mediaSettings.musicAssetId, workspaceId, kind: 'MUSIC' } });
+      if (!asset || !validBackgroundRights(asset)) throw new ApiError(409, 'MUSIC_RIGHTS_INVALID', 'Chọn nhạc có quyền sử dụng trong workspace.');
+    }
   }
 
   async createFromCandidate(request: Request, candidateId: string, raw: unknown) {
@@ -132,6 +247,7 @@ export class ProductionService {
       language: input.language, targetDurationSec: input.targetDurationSec, style: input.style, voiceProfileId: profile.id, voiceId: profile.voiceId,
       speakingRate: input.speakingRate, templateId: input.templateId, backgroundAssetId: input.backgroundAssetId ?? null,
       subtitlePreset: input.subtitlePreset, theme: input.theme, anonymizeAuthors: input.anonymizeAuthors, showEngagement: input.showEngagement,
+      ...(input.mediaSettings ? { mediaSettings: input.mediaSettings } : {}),
       selectedSegmentIds: [], storyVersionId: null, ...(profile.provider === 'vieneu' ? { audioTimed: true } : {}),
     });
     return this.mutation(request, context, `/candidates/${candidateId}/produce`, input, async (tx) => {
@@ -190,7 +306,8 @@ export class ProductionService {
     if (!profile) throw new ApiError(400, 'VOICE_PROFILE_INVALID', 'Choose an available voice profile.');
     if (profile.language !== 'multilingual' && profile.language.toLowerCase() !== base.language.slice(0, 2).toLowerCase()) throw new ApiError(400, 'VOICE_LANGUAGE_MISMATCH', 'Choose a voice profile that supports the script language.');
     const selectedCommentIds = changes.commentSelection === 'TOP_REACTIONS' ? selectTopComments([...story.post.comments].sort((a, b) => a.id.localeCompare(b.id)), changes.targetDurationSec ?? base.targetDurationSec).items.map((comment) => comment.id) : changes.commentIds ?? base.commentIds;
-    const input = productionInputSchema.parse({ ...base, mode: changes.draftOnly ? 'SCRIPT_ONLY' : 'REGENERATE', storyVersionId: null, selectedSegmentIds: [], commentIds: selectedCommentIds, targetDurationSec: changes.targetDurationSec ?? base.targetDurationSec, style: changes.style ?? base.style, voiceProfileId: profile.id, voiceId: profile.voiceId, speakingRate: changes.speakingRate ?? base.speakingRate, ...(profile.provider === 'vieneu' ? { audioTimed: true } : {}) });
+    const settings = { ...changes }; delete settings.draftOnly; delete settings.commentSelection;
+    const input = productionInputSchema.parse({ ...base, ...settings, mode: changes.draftOnly ? 'SCRIPT_ONLY' : 'REGENERATE', storyVersionId: null, selectedSegmentIds: [], commentIds: selectedCommentIds, targetDurationSec: changes.targetDurationSec ?? base.targetDurationSec, style: changes.style ?? base.style, voiceProfileId: profile.id, voiceId: profile.voiceId, speakingRate: changes.speakingRate ?? base.speakingRate, ...(profile.provider === 'vieneu' ? { audioTimed: true } : {}) });
     if (input.commentIds.some((id) => !story.post.comments.some((comment) => comment.id === id))) throw new ApiError(400, 'COMMENT_NOT_IN_SOURCE', 'Select comments that belong to this source post.');
     return this.mutation(request, context, `/stories/${storyId}/regenerate`, changes, async (tx) => this.enqueue(tx, context, story.id, input, `/stories/${storyId}/regenerate`));
   }
@@ -225,7 +342,7 @@ export class ProductionService {
     if (profile.language !== 'multilingual' && profile.language.toLowerCase() !== prior.data.language.slice(0, 2).toLowerCase()) throw new ApiError(400, 'VOICE_LANGUAGE_MISMATCH', 'Choose a voice profile that supports the script language.');
     const base = { ...prior.data }; delete base.preview; delete base.audioTimed;
     const input = productionInputSchema.parse({ ...base, ...changes, voiceProfileId: profile.id, voiceId: profile.voiceId, mode: 'RENDER', storyVersionId: latest.id, selectedSegmentIds: [], ...(profile.provider === 'vieneu' ? { audioTimed: true } : {}) });
-    await this.assertBackground(context.workspaceId, input.backgroundAssetId);
+    await this.assertPresentationAssets(context.workspaceId, input);
     return this.mutation(request, context, `/stories/${storyId}/render`, changes, async (tx) => {
       const current = await tx.storyProject.findFirst({ where: { id: storyId, workspaceId: context.workspaceId }, include: { post: { include: { rights: { orderBy: { createdAt: 'desc' }, take: 1 }, comments: true } }, versions: { orderBy: { version: 'desc' }, take: 1 } } });
       if (!current) return notFound();
@@ -247,8 +364,8 @@ export class ProductionService {
     const prior = video.story.productionRuns[0] ? productionInputSchema.safeParse(video.story.productionRuns[0].input) : null;
     if (!latest || !prior?.success) throw new ApiError(409, 'SCRIPT_REQUIRED', 'Save a script before rendering a video.');
     const backgroundAssetId = changes.backgroundAssetId === undefined ? prior.data.backgroundAssetId : changes.backgroundAssetId;
-    const input = productionInputSchema.parse({ ...prior.data, mode: 'RENDER', storyVersionId: latest.id, selectedSegmentIds: [], templateId: changes.templateId ?? prior.data.templateId, backgroundAssetId, subtitlePreset: changes.subtitlePreset ?? prior.data.subtitlePreset, theme: changes.theme ?? prior.data.theme, anonymizeAuthors: changes.anonymizeAuthors ?? prior.data.anonymizeAuthors, showEngagement: changes.showEngagement ?? prior.data.showEngagement });
-    await this.assertBackground(context.workspaceId, input.backgroundAssetId);
+    const input = productionInputSchema.parse({ ...prior.data, mode: 'RENDER', storyVersionId: latest.id, selectedSegmentIds: [], templateId: changes.templateId ?? prior.data.templateId, backgroundAssetId, subtitlePreset: changes.subtitlePreset ?? prior.data.subtitlePreset, theme: changes.theme ?? prior.data.theme, anonymizeAuthors: changes.anonymizeAuthors ?? prior.data.anonymizeAuthors, showEngagement: changes.showEngagement ?? prior.data.showEngagement, ...(changes.mediaSettings ? { mediaSettings: changes.mediaSettings } : {}) });
+    await this.assertPresentationAssets(context.workspaceId, input);
     return this.mutation(request, context, `/videos/${videoId}/render`, changes, async (tx) => this.enqueue(tx, context, video.story?.id ?? '', input, `/videos/${videoId}/render`));
   }
 
@@ -314,7 +431,7 @@ export class ProductionService {
 
   async video(request: Request, videoId: string) {
     const context = await this.auth.context(request);
-    const video = await this.db.video.findFirst({ where: { id: videoId, workspaceId: context.workspaceId }, include: { mediaAsset: true, channel: { select: { id: true, name: true } }, story: { include: { post: { select: { id: true, platform: true, title: true, body: true, authorAlias: true, comments: { select: { id: true, body: true } } } }, versions: { orderBy: { version: 'desc' }, take: 1, include: { audioAssets: { include: { mediaAsset: { select: { id: true, mimeType: true } } } }, subtitleTracks: true } } } }, renderJob: true } });
+    const video = await this.db.video.findFirst({ where: { id: videoId, workspaceId: context.workspaceId }, include: { productionRun: { select: { input: true } }, mediaAsset: true, channel: { select: { id: true, name: true } }, story: { include: { channel: { select: { id: true, name: true, language: true } }, post: { select: { id: true, platform: true, title: true, body: true, authorAlias: true, comments: { select: { id: true, body: true } } } }, versions: { orderBy: { version: 'desc' }, take: 20, include: { audioAssets: { include: { mediaAsset: { select: { id: true, mimeType: true } } } }, subtitleTracks: true } } } }, renderJob: true } });
     if (!video) return notFound();
     return video;
   }
@@ -362,7 +479,7 @@ export class ProductionService {
     const context = await this.auth.context(request);
     const asset = await this.db.mediaAsset.findFirst({ where: { id: assetId, workspaceId: context.workspaceId }, select: { id: true, kind: true, checksum: true, mimeType: true, metadata: true, rightsMetadata: true } });
     if (!asset) return notFound();
-    if (asset.kind === 'BACKGROUND' && !validBackgroundRights(asset)) return notFound();
+    if (['BACKGROUND', 'MUSIC'].includes(asset.kind) && !validBackgroundRights(asset)) return notFound();
     if (asset.kind === 'VIDEO') {
       const videos = await this.db.video.findMany({
         where: { workspaceId: context.workspaceId, mediaAssetId: asset.id },
@@ -401,27 +518,35 @@ export class ProductionService {
     } else if (asset.kind === 'SOURCE_CAPTURE') {
       const metadata = sourceImageMetadataSchema.safeParse(asset.metadata);
       if (!metadata.success || !await this.db.sourcePost.findFirst({ where: { id: metadata.data.postId, workspaceId: context.workspaceId, deletedAt: null } })) return notFound();
-    } else if (asset.kind !== 'BACKGROUND') return notFound();
+    } else if (!['BACKGROUND', 'MUSIC'].includes(asset.kind)) return notFound();
     const bytes = await objectStore().get(context.workspaceId, asset.checksum);
-    const safeName = asset.kind === 'VIDEO' ? 'short-video.mp4' : asset.kind === 'BACKGROUND' ? 'background.webp' : asset.kind === 'AUDIO' ? 'narration.wav' : 'source.png';
+    const safeName = asset.kind === 'VIDEO' ? 'short-video.mp4' : asset.kind === 'BACKGROUND' ? (asset.mimeType === 'video/mp4' ? 'background.mp4' : 'background.webp') : asset.kind === 'MUSIC' ? 'music.wav' : asset.kind === 'AUDIO' ? 'narration.wav' : 'source.png';
     response.status(200);
     response.setHeader('Content-Type', asset.mimeType);
     response.setHeader('Content-Length', bytes.byteLength);
     response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('Cache-Control', 'private, no-store');
     response.setHeader('Content-Disposition', `${download ? 'attachment' : 'inline'}; filename="${safeName}"`);
+    if (!download && /^(audio|video)\//.test(asset.mimeType)) {
+      response.setHeader('Accept-Ranges', 'bytes');
+      const range = request.header('range');
+      if (range) {
+        const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+        const start = match?.[1] ? Number(match[1]) : Math.max(0, bytes.length - Number(match?.[2]));
+        const end = match?.[1] && match[2] ? Math.min(bytes.length - 1, Number(match[2])) : bytes.length - 1;
+        if (!match || (!match[1] && (!match[2] || Number(match[2]) <= 0)) || !Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || start > end || start >= bytes.length) {
+          response.status(416).setHeader('Content-Range', `bytes */${bytes.length}`); response.removeHeader('Content-Length'); response.end(); return;
+        }
+        response.status(206).setHeader('Content-Range', `bytes ${start}-${end}/${bytes.length}`);
+        response.setHeader('Content-Length', end - start + 1); response.end(bytes.subarray(start, end + 1)); return;
+      }
+    }
     response.end(bytes);
-  }
-
-  private async assertBackground(workspaceId: string, id: string | null) {
-    if (!id) return;
-    const asset = await this.db.mediaAsset.findFirst({ where: { id, workspaceId, kind: 'BACKGROUND' }, select: { rightsMetadata: true } });
-    if (!asset || !validBackgroundRights(asset)) throw new ApiError(409, 'BACKGROUND_RIGHTS_INVALID', 'Choose a workspace background with verified usage rights.');
   }
 
   private async buildInput(workspaceId: string, raw: unknown): Promise<ProductionInput> {
     const input = productionInputSchema.parse(raw);
-    await this.assertBackground(workspaceId, input.backgroundAssetId);
+    await this.assertPresentationAssets(workspaceId, input);
     return input;
   }
 
@@ -450,6 +575,7 @@ export class ProductionService {
   }
 
   private async enqueue(tx: Prisma.TransactionClient, context: AuthContext, storyProjectId: string, input: ProductionInput, route: string) {
+    await this.assertPresentationAssets(context.workspaceId, input, tx);
     const story = await tx.storyProject.findFirst({ where: { id: storyProjectId, workspaceId: context.workspaceId }, include: { post: { include: { comments: true } } } });
     if (!story || story.post.deletedAt) return notFound();
     const provenance = story.post.rawPayload;

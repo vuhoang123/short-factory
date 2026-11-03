@@ -1,10 +1,12 @@
 import { storyScriptSchema, subtitlePresetSchema } from '@shorts-factory/media';
 import { z } from 'zod';
+import { studioMediaSchema } from '@shorts-factory/media/studio-settings';
 
 const id = z.string().uuid();
 const voice = z.string().min(1).max(100);
 
 export const productionCreateSchema = z.object({
+  mediaSettings: studioMediaSchema.optional(),
   draftOnly: z.boolean().optional(),
   commentSelection: z.enum(['MANUAL', 'TOP_REACTIONS']).optional(),
   channelId: id,
@@ -24,7 +26,9 @@ export const productionCreateSchema = z.object({
 export type ProductionCreate = z.infer<typeof productionCreateSchema>;
 
 export const editStorySchema = z.object({ expectedVersion: z.number().int().positive(), script: storyScriptSchema }).strict();
+export const renderRequestSchema = z.object({ mediaSettings: studioMediaSchema.optional(), templateId: z.enum(['RedditStory', 'SocialCommentary']).optional(), backgroundAssetId: id.nullable().optional(), subtitlePreset: subtitlePresetSchema.optional(), theme: z.enum(['dark', 'light']).optional(), anonymizeAuthors: z.boolean().optional(), showEngagement: z.boolean().optional() }).strict();
 export const regenerateStorySchema = z.object({
+  ...renderRequestSchema.shape,
   draftOnly: z.boolean().optional(),
   commentSelection: z.enum(['MANUAL', 'TOP_REACTIONS']).optional(),
   voiceProfileId: voice.optional(),
@@ -34,7 +38,6 @@ export const regenerateStorySchema = z.object({
   style: z.enum(['STORYTELLING', 'SOCIAL_COMMENTARY']).optional(),
 }).strict();
 export const audioRequestSchema = z.object({ preview: z.literal(true).optional(), segmentIds: z.array(z.string().min(1).max(100)).max(30).optional(), voiceProfileId: voice.optional(), speakingRate: z.number().min(0.5).max(2).optional() }).strict();
-export const renderRequestSchema = z.object({ templateId: z.enum(['RedditStory', 'SocialCommentary']).optional(), backgroundAssetId: id.nullable().optional(), subtitlePreset: subtitlePresetSchema.optional(), theme: z.enum(['dark', 'light']).optional(), anonymizeAuthors: z.boolean().optional(), showEngagement: z.boolean().optional() }).strict();
 export const storyRenderRequestSchema = renderRequestSchema.extend({ voiceProfileId: voice.optional(), speakingRate: z.number().min(0.5).max(2).optional() });
 export const videoReviewSchema = z.object({ decision: z.enum(['APPROVED', 'REJECTED']) }).strict();
 export const productionRunQuerySchema = z.object({

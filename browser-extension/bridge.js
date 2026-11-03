@@ -8,7 +8,12 @@
   window.addEventListener('message', event => {
     if (event.source !== window || event.origin !== origin || event.data?.source !== 'shorts-factory') return;
     const message = event.data;
-    if (message.type === 'PING') { emit({ type: 'PONG', requestId: message.requestId, version: '1.0.0' }); return; }
+    if (message.type === 'PING') {
+      try { chrome.runtime.sendMessage({ type: 'BRIDGE_PING' }, result => {
+        if (!chrome.runtime.lastError && result?.ok) emit({ type: 'PONG', requestId: message.requestId, version: result.version });
+      }); } catch { /* A reloaded extension needs a fresh Studio tab. */ }
+      return;
+    }
     if (message.type === 'CAPTURE_ACK') {
       const callback = waiting.get(key(message));
       if (callback) { waiting.delete(key(message)); callback({ ok: message.ok === true, error: typeof message.error === 'string' ? message.error.slice(0, 200) : undefined }); }
@@ -21,6 +26,11 @@
     });
   });
   chrome.runtime.onMessage.addListener((message, _sender, respond) => {
+    if (message?.source === 'shorts-factory-extension' && message.type === 'CAPTURE_CONTEXT') {
+      const element = document.querySelector('[data-capture-job]');
+      respond({ ok: element?.dataset.captureJob === message.jobId && element?.dataset.captureRequest === message.requestId && element?.dataset.captureStatus === 'WAITING_BROWSER' });
+      return;
+    }
     if (message?.source !== 'shorts-factory-extension' || !['CAPTURE_IMAGE', 'CAPTURE_RESULT', 'CAPTURE_ERROR', 'CAPTURE_CANCELLED'].includes(message.type)) return;
     if (message.type === 'CAPTURE_ERROR' || message.type === 'CAPTURE_CANCELLED') { emit(message); respond({ ok: true }); return; }
     const id = key(message);

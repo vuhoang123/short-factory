@@ -12,27 +12,30 @@ import { candidateSchema, channelSchema, mayAdmin, mayEdit, mayReview, paginated
 import { useSession } from './app-shell';
 import { EmptyState, ErrorNotice } from './feedback';
 import { getOperationKey, type OperationKeys } from '../lib/local-export';
-import { humanStage, mediaFailureMessage, studioLink, type StudioItem } from '../lib/studio';
+import { humanStage, mediaFailureMessage, type StudioItem } from '../lib/studio';
 import { CommentPicker } from './comment-picker';
 import { VoiceLibrary } from './voice-library';
 import { commentPlanSchema, type CommentMode } from '../lib/comment-selection';
 import { SourceImagePreview } from './source-capture';
+import { StudioDraftPreview } from './studio-draft-preview';
+import { StudioAssetUpload } from './studio-asset-upload';
+import { StudioMediaCatalog } from './studio-media-catalog';
+import { StudioPresets } from './studio-presets';
+import { studioMediaSchema, studioPresetSettingsSchema } from '@shorts-factory/media/studio-settings';
+import { studioStorySchema as storySchema, studioVideoSchema as videoSchema } from '../lib/studio-response';
+import { playOneAudio } from '../lib/media-preview';
 
 const candidatesSchema = paginated(candidateSchema);
 const channelsSchema = paginated(channelSchema);
 const profilesSchema = z.object({ items: z.array(z.object({ id: z.string(), name: z.string(), provider: z.enum(['local', 'vieneu', 'openai', 'mock']), language: z.string(), voiceId: z.string(), requiresCredentials: z.boolean() })) });
 const templatesSchema = z.object({ items: z.array(z.object({ id: z.enum(['RedditStory', 'SocialCommentary']), version: z.number(), name: z.string(), description: z.string(), status: z.string() })) });
-const backgroundsSchema = z.object({ items: z.array(z.object({ id: z.string(), mimeType: z.string(), metadata: z.unknown(), rights: z.unknown(), createdAt: z.string(), url: z.string() })) });
-const videosSchema = z.object({ items: z.array(z.object({ id: z.string(), title: z.string(), status: z.string(), reviewStatus: z.string(), createdAt: z.string(), durationMs: z.number().nullable(), mediaAssetId: z.string().nullable() })) });
+const backgroundsSchema = z.object({ items: z.array(z.object({ id: z.string(), mimeType: z.string(), metadata: z.object({ name: z.string().optional(), durationMs: z.number().optional() }).nullable(), url: z.string() })) });
+const musicSchema = backgroundsSchema;
 const runSchema = z.object({ id: z.string(), storyProjectId: z.string(), status: z.string(), currentStage: z.string().nullable(), errorCode: z.string().nullable(), stages: z.array(z.object({ name: z.string(), status: z.string(), errorCode: z.string().nullable(), output: z.unknown().optional() })), renderJob: z.object({ progress: z.number() }).nullable(), videos: z.array(z.object({ id: z.string(), status: z.string(), mediaAsset: z.object({ id: z.string() }).nullable() })) });
-const storySchema = z.object({ id: z.string(), channel: z.object({ id: z.string(), name: z.string(), language: z.string() }).nullable(), post: z.object({ id: z.string(), platform: z.string(), title: z.string().nullable(), body: z.string(), authorAlias: z.string().nullable(), comments: z.array(z.object({ id: z.string(), externalId: z.string(), body: z.string(), likes: z.number().nullable(), sensitiveFlags: z.array(z.string()) })) }), versions: z.array(z.object({ id: z.string(), version: z.number(), script: storyScriptSchema, modelVersion: z.string().nullable(), audioAssets: z.array(z.object({ id: z.string(), segmentId: z.string(), durationMs: z.number(), mediaAsset: z.object({ id: z.string(), mimeType: z.string() }) })), subtitleTracks: z.array(z.object({ id: z.string(), preset: z.string(), timeline: z.unknown(), srt: z.string() })) })) });
-const videoStorySchema = storySchema.extend({ post: storySchema.shape.post.extend({ comments: z.array(z.object({ id: z.string(), body: z.string() })) }) });
-const videoSchema = z.object({ id: z.string(), title: z.string(), status: z.string(), reviewStatus: z.string(), durationMs: z.number().nullable(), width: z.number().nullable(), height: z.number().nullable(), fps: z.number().nullable(), renderManifest: z.unknown().nullable(), mediaAsset: z.object({ id: z.string(), mimeType: z.string(), checksum: z.string(), metadata: z.unknown() }).nullable(), story: videoStorySchema.nullable() });
 const createResultSchema = z.object({ runId: z.string(), storyProjectId: z.string(), status: z.string() });
-const uploadResultSchema = z.object({ id: z.string(), url: z.string() });
 const durationFitSchema = z.object({ targetDurationSec: z.number(), durationMs: z.number(), tempo: z.number() });
 const reviewResultSchema = z.object({ videoId: z.string(), status: z.string(), reviewStatus: z.string() });
-const hydratedRunSchema = runSchema.extend({ input: z.object({ targetDurationSec: z.number().optional(), channelId: z.string().optional(), commentIds: z.array(z.string()).optional(), templateId: z.string(), subtitlePreset: z.string(), theme: z.string(), backgroundAssetId: z.string().nullable(), voiceProfileId: z.string(), speakingRate: z.number().optional(), anonymizeAuthors: z.boolean().optional(), showEngagement: z.boolean().optional() }).optional() });
+const hydratedRunSchema = runSchema.extend({ input: z.object({ targetDurationSec: z.number().optional(), channelId: z.string().optional(), commentIds: z.array(z.string()).optional(), templateId: z.enum(['RedditStory', 'SocialCommentary']), subtitlePreset: z.enum(['ClassicCaption', 'KaraokeHighlight']), theme: z.enum(['dark', 'light']), mediaSettings: studioMediaSchema.optional(), backgroundAssetId: z.string().nullable(), voiceProfileId: z.string(), speakingRate: z.number().optional(), anonymizeAuthors: z.boolean().optional(), showEngagement: z.boolean().optional() }).optional() });
 
 
 export function StoryStudio({ source, initialRunId = '', initialVideoId = '', embedded = false }: { source?: StudioItem; initialRunId?: string; initialVideoId?: string; embedded?: boolean }) {
@@ -44,13 +47,14 @@ export function StoryStudio({ source, initialRunId = '', initialVideoId = '', em
   const profiles = useResource('/voice-profiles', profilesSchema);
   const templates = useResource('/video-templates', templatesSchema);
   const backgrounds = useResource('/backgrounds', backgroundsSchema);
-  const videos = useResource('/videos', videosSchema);
+  const music = useResource('/music', musicSchema);
   const [candidateId, setCandidateId] = useState(source?.candidate?.id ?? '');
   const [channelId, setChannelId] = useState(source?.post.channel?.id ?? '');
   const [voiceProfileId, setVoiceProfileId] = useState('');
   const [pendingVoiceId, setPendingVoiceId] = useState('');
   const [commentIds, setCommentIds] = useState<string[]>([]);
   const [commentMode, setCommentMode] = useState<CommentMode>('TOP_REACTIONS');
+  const [needsRegeneration, setNeedsRegeneration] = useState(false);
   const [targetDurationSec, setTargetDurationSec] = useState(40);
   const [runId, setRunId] = useState(initialRunId);
   const [runRevision, setRunRevision] = useState(0);
@@ -67,13 +71,19 @@ export function StoryStudio({ source, initialRunId = '', initialVideoId = '', em
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
   const [selectedBackground, setSelectedBackground] = useState('');
-  const [templateId, setTemplateId] = useState('SocialCommentary');
-  const [subtitlePreset, setSubtitlePreset] = useState('ClassicCaption');
-  const [theme, setTheme] = useState('dark');
+  const [templateId, setTemplateId] = useState<'RedditStory' | 'SocialCommentary'>('SocialCommentary');
+  const [subtitlePreset, setSubtitlePreset] = useState<'ClassicCaption' | 'KaraokeHighlight'>('ClassicCaption');
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [speakingRate, setSpeakingRate] = useState(1);
+  const [style, setStyle] = useState<'STORYTELLING' | 'SOCIAL_COMMENTARY'>('STORYTELLING');
+  const [mediaSettings, setMediaSettings] = useState(() => studioMediaSchema.parse({}));
+  const selectedMusicPlayer = useRef<HTMLAudioElement>(null);
+  useEffect(() => { if (selectedMusicPlayer.current) selectedMusicPlayer.current.volume = mediaSettings.musicVolume; }, [mediaSettings.musicVolume, mediaSettings.musicAssetId]);
   const [anonymizeAuthors, setAnonymizeAuthors] = useState(true);
   const [showEngagement, setShowEngagement] = useState(true);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [reviewedVideoId, setReviewedVideoId] = useState('');
+  const [previewProblem, setPreviewProblem] = useState('Đang chuẩn bị preview…');
   const keys = useRef<OperationKeys>({});
   const hydrateInitial = useRef(Boolean(initialRunId));
   const selectedCandidate = useMemo(() => source ? (source.candidate?.status === 'APPROVED' ? { ...source.candidate, post: source.post } : null) : candidates.data?.items.find((item) => item.id === candidateId) ?? null, [source, candidates.data, candidateId]);
@@ -115,6 +125,7 @@ export function StoryStudio({ source, initialRunId = '', initialVideoId = '', em
         if (hydrateInitial.current && next.input) {
           hydrateInitial.current = false;
           setTemplateId(next.input.templateId); setSubtitlePreset(next.input.subtitlePreset); setTheme(next.input.theme);
+          setMediaSettings(next.input.mediaSettings ?? studioMediaSchema.parse({}));
           setSelectedBackground(next.input.backgroundAssetId ?? ''); setVoiceProfileId(next.input.voiceProfileId);
           setSpeakingRate(next.input.speakingRate ?? 1); setAnonymizeAuthors(next.input.anonymizeAuthors ?? true); setShowEngagement(next.input.showEngagement ?? true);
           if (next.input.targetDurationSec) setTargetDurationSec(next.input.targetDurationSec);
@@ -159,17 +170,17 @@ export function StoryStudio({ source, initialRunId = '', initialVideoId = '', em
 
   async function createProduction(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (latestVersion) { await regenerateScript(); return; }
     if (!selectedCandidate || !channelId || !voiceProfileId) { setError('Choose an approved story, channel and voice first.'); return; }
-    const form = new FormData(event.currentTarget);
     setBusy(true); setError(''); setNotice('');
     try {
       const selectedIds = commentMode === 'TOP_REACTIONS' ? (await api(`/posts/${selectedCandidate.post.id}/comment-selection?duration=${targetDurationSec}`, commentPlanSchema)).items.map((comment) => comment.id) : commentIds;
       const body = {
-        channelId, commentIds: selectedIds, commentSelection: commentMode, language: selectedChannel?.language ?? 'vi', targetDurationSec: Number(form.get('targetDurationSec')),
-        style: String(form.get('style')), voiceProfileId, speakingRate: Number(form.get('speakingRate')),
-        templateId: String(form.get('templateId')), backgroundAssetId: selectedBackground || null,
-        subtitlePreset: String(form.get('subtitlePreset')), theme: String(form.get('theme')),
-        anonymizeAuthors: form.get('anonymizeAuthors') === 'on', showEngagement: form.get('showEngagement') === 'on', draftOnly: true,
+        channelId, commentIds: selectedIds, commentSelection: commentMode, language: selectedChannel?.language ?? 'vi', targetDurationSec,
+        style, voiceProfileId, speakingRate,
+        templateId, backgroundAssetId: selectedBackground || null,
+        subtitlePreset, theme,
+        anonymizeAuthors, showEngagement, mediaSettings, draftOnly: true,
       };
       const result = await api(`/candidates/${selectedCandidate.id}/produce`, createResultSchema, { method: 'POST', body, idempotencyKey: await getOperationKey(keys.current, `draft:${selectedCandidate.id}`, { body, previousRun: runId }) });
       setRunId(result.runId); setStoryId(result.storyProjectId); setActiveVideoId(''); setNotice('Đang soạn kịch bản. Bạn có thể sửa bản nháp trước khi tạo MP4.');
@@ -192,9 +203,9 @@ export function StoryStudio({ source, initialRunId = '', initialVideoId = '', em
     if (!story || !latestVersion) return;
     setBusy(true); setError(''); setNotice('');
     try {
-      const body = { commentIds, commentSelection: commentMode, targetDurationSec, voiceProfileId, speakingRate, draftOnly: true };
+      const body = { commentIds, commentSelection: commentMode, targetDurationSec, ...currentSettings, style, draftOnly: true };
       const result = await api(`/stories/${story.id}/regenerate`, createResultSchema, { method: 'POST', body, idempotencyKey: await getOperationKey(keys.current, `regenerate:${story.id}`, { body, version: latestVersion.id }) });
-      setRunId(result.runId); setStoryId(result.storyProjectId); setActiveVideoId(''); setNotice('Đang soạn phiên bản kịch bản mới; chưa render video.');
+      setRunId(result.runId); setStoryId(result.storyProjectId); setActiveVideoId(''); setNeedsRegeneration(false); setNotice('Đang soạn phiên bản kịch bản mới; chưa render video.');
     } catch (failure) { setError(errorMessage(failure)); } finally { setBusy(false); }
   }
 
@@ -238,13 +249,12 @@ export function StoryStudio({ source, initialRunId = '', initialVideoId = '', em
   }
 
   async function decideReview(decision: 'APPROVED' | 'REJECTED') {
-    if (!video) return;
+    if (!video || decision === 'APPROVED' && reviewedVideoId !== video.id) return;
     setBusy(true); setError(''); setNotice('');
     try {
       await api(`/videos/${video.id}/reviews`, reviewResultSchema, { method: 'POST', body: { decision } });
       setVideo(await api(`/videos/${video.id}`, videoSchema));
-      videos.reload();
-      setNotice(decision === 'APPROVED' ? 'Video approved after rights and safety checks.' : 'Video rejected and recorded for the workspace.');
+      setNotice(decision === 'APPROVED' ? 'Đã duyệt video. Bạn có thể tải MP4 hoặc mở Publish để bàn giao.' : 'Đã ghi nhận không duyệt video. Sửa kịch bản hoặc thiết lập rồi dựng bản mới.');
     } catch (failure) { setError(errorMessage(failure)); } finally { setBusy(false); }
   }
 
@@ -252,7 +262,7 @@ export function StoryStudio({ source, initialRunId = '', initialVideoId = '', em
     if (!story) return;
     setBusy(true); setError(''); setNotice('');
     try {
-      const body = { backgroundAssetId: selectedBackground || null, templateId, subtitlePreset, theme, voiceProfileId, speakingRate, anonymizeAuthors, showEngagement };
+      const body = { backgroundAssetId: selectedBackground || null, templateId, subtitlePreset, theme, voiceProfileId, speakingRate, anonymizeAuthors, showEngagement, mediaSettings };
       const result = await api(`/stories/${story.id}/render`, createResultSchema, { method: 'POST', body, idempotencyKey: await getOperationKey(keys.current, `render:${story.id}`, { body, version: latestVersion?.id, prior: runId }) });
       setActiveVideoId(''); setRunId(result.runId); setStoryId(result.storyProjectId); setNotice('A new render is queued from the latest script version.');
     } catch (failure) { setError(errorMessage(failure)); } finally { setBusy(false); }
@@ -267,89 +277,113 @@ export function StoryStudio({ source, initialRunId = '', initialVideoId = '', em
     } catch (failure) { setError(errorMessage(failure)); } finally { setBusy(false); }
   }
 
-  async function uploadBackground(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const file = form.get('background');
-    if (!(file instanceof File) || file.size > 20 * 1024 * 1024) { setError('Choose an image under 20 MB.'); return; }
-    setBusy(true); setError('');
-    try {
-      const response = await fetch('/api/v1/backgrounds', { method: 'POST', credentials: 'same-origin', headers: {
-        'Content-Type': file.type, 'Idempotency-Key': crypto.randomUUID(), 'X-Asset-Name': String(form.get('name') || file.name),
-        'X-Rights-Basis': String(form.get('basis')), 'X-Rights-Attested': form.get('attested') === 'on' ? 'true' : 'false',
-        'X-Rights-Evidence': String(form.get('evidence') || ''),
-      }, body: file });
-      const body: unknown = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(z.object({ message: z.string() }).safeParse(body).data?.message ?? 'The background could not be uploaded.');
-      const result = uploadResultSchema.parse(body);
-      setSelectedBackground(result.id); backgrounds.reload(); setNotice('Background uploaded with your usage attestation. It remains subject to editorial review.');
-      event.currentTarget.reset();
-    } catch (failure) { setError(errorMessage(failure)); } finally { setBusy(false); }
-  }
-
   const preview = useMemo(() => {
     if (!video?.renderManifest || !video.story?.versions[0]) return null;
     const parsed = renderManifestSchema.safeParse(video.renderManifest);
     if (!parsed.success) return null;
-    const version = video.story.versions[0];
+    const version = video.story.versions.find(version => version.id === parsed.data.storyVersionId);
+    if (!version) return null;
     const inputProps = {
       manifest: parsed.data,
       post: { title: video.story.post.title, body: video.story.post.body, authorAlias: video.story.post.authorAlias },
       comments: video.story.post.comments.map((comment) => ({ id: comment.id, body: comment.body, authorAlias: null })),
       backgroundSrc: parsed.data.backgroundAssetId ? `/api/v1/media/${parsed.data.backgroundAssetId}` : null,
+      ...(parsed.data.mediaSettings?.musicAssetId ? { musicSrc: `/api/v1/media/${parsed.data.mediaSettings.musicAssetId}` } : {}),
       audioSources: Object.fromEntries(version.audioAssets.map((audio) => [audio.mediaAsset.id, `/api/v1/media/${audio.mediaAsset.id}`])),
       ...(parsed.data.sourceImages ? { sourceImageSources: Object.fromEntries(parsed.data.sourceImages.map(image => [image.assetId, `/api/v1/media/${image.assetId}`])) } : {}),
     };
     return { manifest: parsed.data, inputProps };
   }, [video]);
 
-  if (!canEdit && !canReview) return <>{!embedded && <div className="page-heading"><div><span className="eyebrow">STUDIO</span><h1>Studio</h1></div></div>}<div className="notice">A workspace editor or reviewer can access the production studio.</div></>;
+  const currentSettings = {
+    voiceProfileId, speakingRate, templateId, subtitlePreset, theme, backgroundAssetId: selectedBackground || null,
+    anonymizeAuthors, showEngagement, mediaSettings,
+  };
+  function applySettings(settings: z.infer<typeof studioPresetSettingsSchema>) {
+    if (!compatibleProfiles.some(profile => profile.id === settings.voiceProfileId)) { setError('Giọng trong bộ thiết lập không khả dụng với kênh này. Chọn một bộ khác.'); return; }
+    setVoiceProfileId(settings.voiceProfileId); setSpeakingRate(settings.speakingRate); setTemplateId(settings.templateId);
+    setSubtitlePreset(settings.subtitlePreset); setTheme(settings.theme); setSelectedBackground(settings.backgroundAssetId ?? '');
+    setAnonymizeAuthors(settings.anonymizeAuthors); setShowEngagement(settings.showEngagement); setMediaSettings(settings.mediaSettings);
+  }
+  const selectedBackgroundAsset = backgrounds.data?.items.find(asset => asset.id === selectedBackground);
+  const previewScript = latestVersion ? { ...latestVersion.script, segments: orderedSegments.map(segment => ({ ...segment, text: editedText[segment.id] ?? segment.text })) } : null;
+  const recordedPreview = !dirty && preview && latestVersion && preview.manifest.storyVersionId === latestVersion.id && video?.productionRun?.input.voiceProfileId === voiceProfileId && video.productionRun.input.speakingRate === speakingRate ? preview.inputProps : undefined;
+  const renderBlockers = [
+    ...(needsRegeneration ? ['Đã đổi bình luận. Soạn lại kịch bản để áp dụng lựa chọn mới.'] : []),
+    ...(latestVersion && latestVersion.script.targetDurationSec !== targetDurationSec ? ['Đã đổi thời lượng. Soạn lại kịch bản để áp dụng.'] : []),
+    ...(previewProblem ? [previewProblem] : []),
+    ...(dirty ? ['Lưu phiên bản kịch bản để xuất những thay đổi vừa sửa.'] : []),
+    ...(!voiceProfileId || !compatibleProfiles.some(profile => profile.id === voiceProfileId) ? ['Chọn giọng đọc hỗ trợ ngôn ngữ của kênh.'] : []),
+    ...(selectedBackground && !backgrounds.loading && !selectedBackgroundAsset ? ['Nền đã chọn không còn khả dụng. Chọn nền khác.'] : []),
+    ...(mediaSettings.musicAssetId && !music.loading && !music.data?.items.some(asset => asset.id === mediaSettings.musicAssetId) ? ['Nhạc đã chọn không còn khả dụng. Chọn nhạc khác.'] : []),
+    ...(selectedBackgroundAsset?.mimeType === 'video/mp4' && mediaSettings.backgroundStartSec * 1000 >= (selectedBackgroundAsset.metadata?.durationMs ?? 0) ? ['Điểm bắt đầu phải nằm trong video nền.'] : []),
+  ];
+  if (!canEdit && !canReview) return <div className="notice">Cần vai trò biên tập hoặc duyệt để mở bàn dựng video.</div>;
   return <>
-    {!embedded && <div className="page-heading"><div><span className="eyebrow">02 / STUDIO</span><h1>Studio</h1><p>Soạn kịch bản, nghe lời đọc và tạo video từ nội dung đã duyệt.</p></div><span className="badge neutral">Human review required</span></div>}
+    {!embedded && <div className="page-heading"><div><span className="eyebrow">02 / STUDIO</span><h1>Studio</h1><p>Biên tập nội dung, xem trước và xuất video local.</p></div></div>}
     {error && <ErrorNotice message={error} />}{runError && <ErrorNotice message={runError} />}{notice && <div className="notice success" role="status">{notice}</div>}
-    {canEdit && <div className="studio-grid">
-      <details className="panel form-panel studio-setup" open={!latestVersion}><summary>1. Nội dung, giọng đọc & bố cục</summary><p className="muted">Chỉ tạo bản nháp từ nội dung đủ điều kiện. MP4 được tạo ở bước riêng. Mở lại phần này để đổi template, phụ đề hoặc hình nền.</p>
-        {candidates.error && <ErrorNotice message={candidates.error} retry={candidates.reload} />}
-        {!source && candidates.loading && !candidates.data ? <p role="status" className="loading-state">Loading approved stories…</p> : source ? !selectedCandidate ? <EmptyState title="Bài này chưa đủ điều kiện">Duyệt quyền và chọn nội dung ở phần chi tiết phía trên.</EmptyState> : null : !candidates.data?.items.length ? <EmptyState title="No approved stories yet">Review rights and approve a candidate before producing a video.</EmptyState> : null}
-        {selectedCandidate && <form className="form-stack" onSubmit={createProduction}>
-          {!source && <label>Approved source story<select value={candidateId} onChange={(event) => setCandidateId(event.target.value)}>{candidates.data?.items.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.post.title || candidate.post.body.slice(0, 74)} · score {candidate.score ?? '—'}</option>)}</select></label>}
-          {selectedCandidate && <div className="studio-source"><strong>{selectedCandidate.post.title || 'Source post'}</strong><p>{selectedCandidate.post.body}</p><span className="field-help">{selectedCandidate.post.platform} · rights approved · score {selectedCandidate.score ?? '—'}</span></div>}
-          <SourceImagePreview postId={selectedCandidate.post.id} anonymized={anonymizeAuthors} />
-          <div><h3 className="studio-label">Bình luận được chọn</h3><CommentPicker postId={selectedCandidate.post.id} duration={targetDurationSec} mode={commentMode} selectedIds={commentIds} onMode={setCommentMode} onSelection={setCommentIds} locked={processing} /></div>
-          <label>Content channel<select value={channelId} onChange={(event) => setChannelId(event.target.value)}>{(channels.data?.items ?? []).map((channel) => <option key={channel.id} value={channel.id}>{channel.name} · {channel.language}</option>)}</select></label>
-          <div className="studio-form-row"><label>Template<select name="templateId" value={templateId} onChange={(event) => setTemplateId(event.target.value)}>{(templates.data?.items ?? []).filter((item) => item.status === 'READY').map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><label>Duration target<select name="targetDurationSec" value={targetDurationSec} onChange={(event) => setTargetDurationSec(Number(event.target.value))}><option value="25">25 seconds</option><option value="40">40 seconds</option><option value="60">60 seconds</option><option value="90">90 seconds</option><option value="120">120 seconds</option></select></label></div>
-          <div className="studio-form-row"><label>Script style<select name="style"><option value="STORYTELLING">Storytelling</option><option value="SOCIAL_COMMENTARY">Social commentary</option></select></label><label>Subtitles<select name="subtitlePreset" value={subtitlePreset} onChange={(event) => setSubtitlePreset(event.target.value)}><option value="ClassicCaption">Classic captions</option><option value="KaraokeHighlight">Karaoke highlight</option></select></label></div>
-          <div className="studio-form-row"><label>Narration voice<select value={voiceProfileId} onChange={(event) => setVoiceProfileId(event.target.value)}>{compatibleProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}{profile.requiresCredentials ? ' · credentials required' : ''}</option>)}</select></label><label>Speaking rate<select name="speakingRate" value={speakingRate} onChange={(event) => setSpeakingRate(Number(event.target.value))}><option value="0.85">Slower</option><option value="1">Normal</option><option value="1.15">Faster</option></select></label></div>
-          {profiles.data?.items.find((profile) => profile.id === voiceProfileId)?.provider === 'mock' && <p className="field-help">The mock voice emits a deterministic test tone, not speech. Choose a configured voice provider for narration.</p>}
-          <div className="studio-form-row"><label>Visual theme<select name="theme" value={theme} onChange={(event) => setTheme(event.target.value)}><option value="dark">Dark</option><option value="light">Light</option></select></label><label>Background<select value={selectedBackground} onChange={(event) => setSelectedBackground(event.target.value)}><option value="">Default gradient</option>{(backgrounds.data?.items ?? []).map((item) => <option key={item.id} value={item.id}>{String((item.metadata as { name?: string } | null)?.name ?? item.id.slice(0, 8))}</option>)}</select></label></div>
-          <label className="checkbox-label"><input type="checkbox" name="anonymizeAuthors" checked={anonymizeAuthors} onChange={(event) => setAnonymizeAuthors(event.target.checked)} /><span>Anonymize author names in the video</span></label>
-          <label className="checkbox-label"><input type="checkbox" name="showEngagement" checked={showEngagement} onChange={(event) => setShowEngagement(event.target.checked)} /><span>Show available engagement counts</span></label>
-          <button className="button" disabled={busy || !compatibleProfiles.length || processing || Boolean(source?.lifecycle.blockedReason)}>{busy ? 'Đang gửi…' : 'Tạo bản nháp kịch bản'} <span aria-hidden="true">→</span></button>
-        </form>}
-      </details>
-      <section className="studio-right-column">
-        <VoiceLibrary enabled={profiles.data?.items.some((profile) => profile.provider === 'vieneu') ?? false} onCreated={(id) => { setPendingVoiceId(id); profiles.reload(); }} />
-        <details className="panel form-panel"><summary>Thư viện hình nền · nâng cao</summary><p className="muted">Upload an image you own or have permission to use.</p>
-          {backgrounds.error && <ErrorNotice message={backgrounds.error} retry={backgrounds.reload} />}
-          <form className="form-stack studio-upload" onSubmit={uploadBackground}><label>Image file<input type="file" name="background" accept="image/png,image/jpeg,image/webp" required /></label><label>Asset name<input name="name" maxLength={120} placeholder="Rainy city loop" required /></label><label>Usage basis<select name="basis"><option value="OWNED">I own this image</option><option value="LICENSED">Licensed for this use</option><option value="CONSENTED">Permission granted</option></select></label><label>License or consent reference<input name="evidence" maxLength={2000} placeholder="Optional for owned work; required otherwise" /></label><label className="checkbox-label"><input type="checkbox" name="attested" required /><span>I confirm this background may be used in this workspace’s videos.</span></label><button className="button secondary small" disabled={busy}>Upload and attest</button></form>
-        </details>
-        <details className="panel studio-run" open={processing}><summary className="studio-progress-summary">Tiến độ xử lý · {run?.status === 'CANCELLED' ? 'Đã hủy' : run?.status.startsWith('FAILED') || run?.status.startsWith('BLOCKED') ? 'Cần xử lý lỗi' : humanStage(run?.currentStage ?? null)}</summary><div className="panel-heading"><div><h2>Production status</h2><p>Each run can resume from its last completed stage.</p></div></div>
-          {run ? <div className="studio-run-content"><div className="studio-run-status"><span className={`badge ${run.status === 'SUCCEEDED' ? 'positive' : run.status.startsWith('FAILED') || run.status.startsWith('BLOCKED') ? 'negative' : 'neutral'}`}>{run.status.replaceAll('_', ' ')}</span><span className="field-help">{run.currentStage?.replaceAll('_', ' ') ?? 'Queued'}</span></div><progress max="1" value={run.renderJob?.progress ?? 0} aria-label="Production progress" /><ol className="stage-list">{run.stages.map((stage) => <li key={stage.name} className={stage.status === 'SUCCEEDED' ? 'done' : stage.status === 'RUNNING' ? 'active' : ''}><span>{stage.name.replaceAll('_', ' ')}</span><span>{stage.status}</span></li>)}</ol>{run.errorCode && <div className="notice error">{mediaFailureMessage(run.errorCode)}</div>}{mayAdmin(role) && run.status.startsWith('FAILED') && <button className="button secondary small" onClick={() => void retryFailedRun()} disabled={busy}>Retry failed run</button>}</div> : <EmptyState title="No active production">Start with an approved source. Completed videos remain available in the review list below.</EmptyState>}
-        </details>
-      </section>
-    </div>}
-    {canEdit && processing && <section className="notice"><p>{humanStage(run?.currentStage ?? null)}. Có thể hủy trước khi bắt đầu một lượt mới.</p><label className="checkbox-label"><input type="checkbox" checked={confirmCancel} onChange={(event) => setConfirmCancel(event.target.checked)} /><span>Xác nhận hủy lượt đang chạy</span></label><button className="button secondary small" disabled={busy || !confirmCancel} onClick={() => void cancelRun()}>Hủy lượt xử lý</button></section>}
-    {story && latestVersion && <section className="panel studio-script"><div className="panel-heading"><div><h2>{canEdit ? 'Script editor' : 'Approved script'}</h2><p>Version {latestVersion.version} · {latestVersion.script.language} · about {estimatedDurationMs ? `${Math.round(estimatedDurationMs / 1000)} sec` : '—'} · source-grounded segments</p></div>{canEdit && <div className="studio-preview-actions"><button className="button secondary small" onClick={() => void regenerateScript()} disabled={busy || processing || dirty}>Regenerate draft</button><button className="button secondary small" onClick={() => void requestAudioPreview()} disabled={busy || processing || dirty || !voiceProfileId}>Nghe thử giọng</button><button className="button secondary small" onClick={() => void saveScript()} disabled={busy || processing || !dirty}>Save new version</button></div>}</div>
-      <div className="studio-segments">{orderedSegments.map((segment, index) => <div className="studio-segment" key={segment.id}><div className="studio-segment-meta"><span><b>{String(index + 1).padStart(2, '0')}</b>{segment.type.replaceAll('_', ' ')}<small>{segment.narrationType.replaceAll('_', ' ')}</small></span>{canEdit && <div className="studio-segment-order"><button type="button" className="text-button" aria-label={`Move segment ${index + 1} up`} onClick={() => moveSegment(segment.id, -1)} disabled={index === 0}>↑</button><button type="button" className="text-button" aria-label={`Move segment ${index + 1} down`} onClick={() => moveSegment(segment.id, 1)} disabled={index === orderedSegments.length - 1}>↓</button></div>}</div>{canEdit ? <textarea disabled={busy || processing} aria-label={`${segment.type.replaceAll('_', ' ')} text`} rows={Math.min(6, Math.max(2, Math.ceil(segment.text.length / 100)))} value={editedText[segment.id] ?? segment.text} onChange={(event) => setEditedText((current) => ({ ...current, [segment.id]: event.target.value }))} /> : <p className="studio-segment-readonly">{segment.text}</p>}</div>)}</div>
-      {story.versions.length > 1 && <section className="studio-version-compare"><label>Compare with version<select value={compareVersionId} onChange={(event) => setCompareVersionId(event.target.value)}>{story.versions.filter((version) => version.id !== latestVersion.id).map((version) => <option key={version.id} value={version.id}>Version {version.version}</option>)}</select></label>{comparedVersion && <div className="studio-version-columns"><div><h3>Version {comparedVersion.version}</h3>{comparedVersion.script.segments.map((segment, index) => <p key={segment.id}><b>{String(index + 1).padStart(2, '0')} · {segment.type}</b><br />{segment.text}</p>)}</div><div><h3>Current · Version {latestVersion.version}</h3>{orderedSegments.map((segment, index) => <p key={segment.id}><b>{String(index + 1).padStart(2, '0')} · {segment.type}</b><br />{editedText[segment.id] ?? segment.text}</p>)}</div></div>}</section>}
-      {latestVersion.audioAssets.length > 0 && <div className="studio-audio-previews"><h3>Lời đọc và bản nghe thử</h3><p className="field-help">Bản nghe thử dùng câu mẫu ngắn với giọng và tốc độ đã chọn.</p>{latestVersion.audioAssets.map((audio) => <div key={audio.id}><span>{latestVersion.script.segments.find((segment) => segment.id === audio.segmentId)?.type ?? (audio.segmentId === 'voice-preview' ? 'Bản nghe thử giọng' : 'Segment')} · {Math.round(audio.durationMs / 1000)} sec</span><audio controls preload="none" src={`/api/v1/media/${audio.mediaAsset.id}`} /></div>)}</div>}
-      <p className="field-help studio-grounding">Quoted comments and verbatim source text remain locked to the original. If you revise a paraphrase or commentary, keep it faithful to the cited material.</p>
+    <nav className="studio-editor-nav" aria-label="Các phần biên tập">{latestVersion && <Link className="button secondary small" href="#studio-script">Kịch bản</Link>}{canEdit && <Link className="button secondary small" href="#studio-setup">Thiết lập</Link>}{canEdit && <Link className="button secondary small" href="#studio-media-catalog">Chọn nền & nhạc · xem/nghe thử ngay ↓</Link>}<Link className="button secondary small" href="#studio-live-preview">Xem trước bố cục</Link></nav>
+    {video && <section className="panel studio-preview" id="video-review" aria-labelledby="video-review-heading">
+      <div className="panel-heading"><div><span className="eyebrow">DUYỆT & TẢI VỀ</span><h2 id="video-review-heading">Xem và duyệt video</h2><p>{video.title} · {video.durationMs ? `${(video.durationMs/1000).toFixed(1)} giây` : 'Đang dựng'} · {video.width ?? '—'} × {video.height ?? '—'}</p></div><span className="badge neutral">{video.reviewStatus === 'PENDING' ? 'Chờ duyệt' : video.reviewStatus === 'APPROVED' ? 'Đã duyệt' : video.reviewStatus === 'REJECTED' ? 'Không duyệt' : video.reviewStatus}</span></div>
+      {video.mediaAsset ? <div className="studio-player-column">
+        <video className="studio-html-video" controls playsInline preload="metadata" aria-label="Video MP4 đã xuất" src={`/api/v1/media/${video.mediaAsset.id}`} />
+        <div className="studio-review-controls">
+          <h3>Kiểm tra bản MP4 đã dựng</h3><p>Xem lời đọc, phụ đề, ảnh bài và bình luận trước khi ghi nhận quyết định.</p>
+          {video.status === 'READY_FOR_REVIEW' && video.reviewStatus === 'PENDING' && (canReview ? <>
+            <label className="checkbox-label"><input type="checkbox" checked={reviewedVideoId === video.id} onChange={event => setReviewedVideoId(event.target.checked ? video.id : '')} /><span>Tôi đã xem video, kiểm tra lời đọc, phụ đề và quyền sử dụng.</span></label>
+            <div className="phase5-actions"><button className="button" onClick={() => void decideReview('APPROVED')} disabled={busy || reviewedVideoId !== video.id}>Duyệt video</button><button className="button secondary" onClick={() => void decideReview('REJECTED')} disabled={busy}>Không duyệt video</button></div>
+          </> : <p className="notice">Cần chủ workspace, quản trị viên hoặc người duyệt để duyệt video này. Bạn có thể xem và tải bản MP4.</p>)}
+          <div className="phase5-actions"><a className="button secondary" href={`/api/v1/media/${video.mediaAsset.id}?download=1`}>Tải MP4 về máy</a>{video.reviewStatus === 'APPROVED' && <Link className="text-button" href="/publish">Mở bàn giao video →</Link>}</div>
+          {preview && <details className="studio-remotion-preview"><summary>Xem composition của bản đã xuất</summary><Player component={StoryComposition} inputProps={preview.inputProps} durationInFrames={preview.manifest.durationFrames} compositionWidth={1080} compositionHeight={1920} fps={30} controls style={{ width: '100%', maxHeight: 740, aspectRatio: '9 / 16' }} /></details>}
+        </div>
+      </div> : <p className="loading-state">Chưa có bản MP4 để duyệt. Đợi lượt dựng hoàn tất hoặc kiểm tra tiến độ.</p>}
     </section>}
-    {durationFit.success && <p className="notice" role="status">Thời lượng audio: {(durationFit.data.durationMs / 1000).toFixed(1)} giây / mục tiêu {durationFit.data.targetDurationSec} giây. {alignedCaptions ? 'Phụ đề đã căn theo audio; hãy nghe kiểm tra trước khi duyệt.' : 'Đang chờ căn phụ đề theo audio.'}</p>}
-    {latestVersion && <section className="panel draft-render"><div><span className="eyebrow">3 / DỰNG VIDEO</span><h2>{video ? 'Dựng phiên bản tiếp theo' : 'Kịch bản đã sẵn sàng'}</h2><p>{dirty ? 'Lưu phiên bản kịch bản trước khi nghe hoặc dựng video.' : 'Tạo lời đọc, phụ đề và video MP4 từ phiên bản đã lưu.'}</p>{canEdit && <button className="button" onClick={() => void renderLatest()} disabled={busy || dirty || processing}>Tạo video MP4</button>}</div><div className={`draft-poster ${theme}`} aria-label="Xem thử chữ trong bản nháp"><small>BỐ CỤC CHỮ · CHƯA RENDER</small><strong>{story?.post.title}</strong><p>{orderedSegments[0] ? editedText[orderedSegments[0].id] ?? orderedSegments[0].text : ''}</p><span>{subtitlePreset === 'KaraokeHighlight' ? 'Karaoke highlight' : 'Classic captions'}</span></div></section>}
-    {video && <section className="panel studio-preview"><div className="panel-heading"><div><h2>Video preview</h2><p>{video.title} · {video.durationMs ? `${Math.round(video.durationMs / 1000)} sec` : 'render in progress'} · {video.width ?? '—'} × {video.height ?? '—'} · {video.fps ?? '—'} fps</p></div><div className="studio-preview-actions"><span className={`badge ${video.reviewStatus === 'APPROVED' ? 'positive' : video.reviewStatus === 'REJECTED' || video.reviewStatus === 'BLOCKED' ? 'negative' : 'neutral'}`}>{video.reviewStatus.replaceAll('_', ' ')}</span>{canReview && video.reviewStatus === 'PENDING' && video.mediaAsset && <><button className="button secondary small" onClick={() => void decideReview('REJECTED')} disabled={busy}>Reject video</button><button className="button small" onClick={() => void decideReview('APPROVED')} disabled={busy}>Approve video</button></>}{video.mediaAsset && <a className="button small" href={`/api/v1/media/${video.mediaAsset.id}?download=1`}>Download MP4</a>}</div></div>
-      {video.mediaAsset && <div className="studio-player-column"><video className="studio-html-video" controls playsInline preload="metadata" src={`/api/v1/media/${video.mediaAsset.id}`} /><details className="studio-remotion-preview"><summary>Open editable composition preview</summary>{preview && <Player component={StoryComposition} inputProps={preview.inputProps} durationInFrames={preview.manifest.durationFrames} compositionWidth={1080} compositionHeight={1920} fps={30} controls style={{ width: '100%', maxHeight: 740, aspectRatio: '9 / 16' }} />}</details></div>}
-    </section>}
-    <section className="panel studio-video-list"><div className="panel-heading"><div><h2>Review queue</h2><p>Generated videos stay pending until a workspace reviewer records a decision.</p></div><button className="text-button" onClick={videos.reload}>Refresh</button></div>{videos.loading && !videos.data ? <p role="status" className="loading-state">Loading videos…</p> : videos.error ? <ErrorNotice message={videos.error} retry={videos.reload} /> : videos.data?.items.length ? <div className="table-scroll"><table><thead><tr><th>Video</th><th>Status</th><th>Review</th><th>Duration</th><th>Output</th></tr></thead><tbody>{videos.data.items.map((item) => <tr key={item.id}><td><Link className="text-button" href={studioLink({ videoId: item.id })}>{item.title}</Link></td><td>{item.status}</td><td>{item.reviewStatus}</td><td>{item.durationMs ? `${Math.round(item.durationMs / 1000)} sec` : '—'}</td><td>{item.mediaAssetId ? <a className="text-button" href={`/api/v1/media/${item.mediaAssetId}?download=1`}>MP4 ↓</a> : 'Rendering'}</td></tr>)}</tbody></table></div> : <EmptyState title="No videos to review">Generated outputs will appear here when their render and media checks complete.</EmptyState>}</section>
+    <div className="studio-workspace">
+      <div className="studio-edit-column">
+        {story && latestVersion && <section className="panel studio-script" id="studio-script"><div className="panel-heading"><div><span className="eyebrow">KỊCH BẢN & LỜI ĐỌC</span><h2>Biên tập kịch bản</h2><p>Phiên bản {latestVersion.version} · {latestVersion.script.language} · {estimatedDurationMs ? `khoảng ${Math.round(estimatedDurationMs / 1000)} giây` : 'thời gian tạm tính'}</p></div>{canEdit && <button className="button secondary small" onClick={() => void saveScript()} disabled={busy || processing || !dirty}>Lưu phiên bản</button>}</div>
+          {dirty && <p className="notice warning">Có thay đổi chưa lưu. Preview đã cập nhật; lưu kịch bản trước khi tạo MP4.</p>}
+          <div className="studio-segments">{orderedSegments.map((segment,index) => <div className="studio-segment" key={segment.id}><div className="studio-segment-meta"><span><b>{String(index+1).padStart(2,'0')}</b>{segment.type}<small>{segment.narrationType === 'VERBATIM' ? 'Trích nguyên văn · giữ nguồn' : 'Lời dẫn có thể chỉnh sửa'}</small></span>{canEdit && <div className="studio-segment-order"><button type="button" className="text-button" aria-label={`Move segment ${index+1} up`} disabled={busy || processing || index === 0} onClick={() => moveSegment(segment.id,-1)}>↑</button><button type="button" className="text-button" aria-label={`Move segment ${index+1} down`} disabled={busy || processing || index === orderedSegments.length-1} onClick={() => moveSegment(segment.id,1)}>↓</button></div>}</div>{canEdit ? <textarea aria-label={`${segment.type} text`} readOnly={segment.narrationType === 'VERBATIM'} disabled={busy || processing} maxLength={4000} rows={Math.min(6,Math.max(2,Math.ceil(segment.text.length/100)))} value={editedText[segment.id] ?? segment.text} onChange={event => setEditedText(current => ({ ...current, [segment.id]: event.target.value }))} /> : <p>{segment.text}</p>}</div>)}</div>
+          {story.versions.length > 1 && <details className="studio-version-compare"><summary>Lịch sử phiên bản</summary><label>So sánh với phiên bản<select value={compareVersionId} onChange={event => setCompareVersionId(event.target.value)}>{story.versions.filter(version => version.id !== latestVersion.id).map(version => <option key={version.id} value={version.id}>Phiên bản {version.version}</option>)}</select></label>{comparedVersion && <div className="studio-version-columns"><div>{comparedVersion.script.segments.map(segment => <p key={segment.id}>{segment.text}</p>)}</div><div>{orderedSegments.map(segment => <p key={segment.id}>{editedText[segment.id] ?? segment.text}</p>)}</div></div>}</details>}
+          <details className="studio-audio-previews"><summary>Lời đọc đã tạo</summary>{latestVersion.audioAssets.filter(audio => audio.segmentId !== 'voice-preview').map(audio => <div key={audio.id}><span>{audio.segmentId} · {(audio.durationMs/1000).toFixed(1)} giây</span><audio controls preload="none" src={`/api/v1/media/${audio.mediaAsset.id}`} /></div>)}</details>
+        </section>}
+        {canEdit && <section className="panel form-panel studio-setup" id="studio-setup">
+          <div className="panel-heading"><div><span className="eyebrow">THIẾT LẬP VIDEO</span><h2>Thiết lập video</h2><p>Thay đổi thiết lập để xem bố cục; chỉ xuất khi bạn bấm tạo MP4.</p></div></div>
+          {candidates.error && !source && <ErrorNotice message={candidates.error} retry={candidates.reload} />}
+          {!selectedCandidate && <EmptyState title="Bài này chưa đủ điều kiện">Duyệt quyền và chọn nội dung ở phần nguồn phía trên.</EmptyState>}
+          <StudioPresets settings={currentSettings} onApply={applySettings} disabled={busy || processing} />
+          {selectedCandidate && <form className="form-stack" onSubmit={createProduction}><fieldset className="studio-fields" disabled={busy || processing}>
+            {!source && <label>Bài đã duyệt<select value={candidateId} onChange={event => setCandidateId(event.target.value)}>{candidates.data?.items.map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.post.title || candidate.post.body.slice(0, 74)}</option>)}</select></label>}
+            <details className="studio-original-source"><summary>Bài và ảnh nguồn</summary><div className="studio-source"><strong>{selectedCandidate.post.title || 'Bài nguồn'}</strong><p>{selectedCandidate.post.body}</p></div><SourceImagePreview postId={selectedCandidate.post.id} anonymized={anonymizeAuthors} /></details>
+            <div className="studio-form-row"><label>Kênh nội dung<select disabled={Boolean(latestVersion)} value={channelId} onChange={event => setChannelId(event.target.value)}>{channels.data?.items.map(channel => <option key={channel.id} value={channel.id}>{channel.name} · {channel.language}</option>)}</select></label><label>Độ dài mục tiêu<select name="targetDurationSec" value={targetDurationSec} onChange={event => setTargetDurationSec(Number(event.target.value))}>{[25,40,60,90,120].map(value => <option key={value} value={value}>{value} giây</option>)}</select></label></div>
+            <details className="studio-comment-section" open={!latestVersion}><summary>Bình luận trong video</summary><CommentPicker postId={selectedCandidate.post.id} duration={targetDurationSec} mode={commentMode} selectedIds={commentIds} onMode={mode => { setCommentMode(mode); if (latestVersion) setNeedsRegeneration(true); }} onSelection={ids => { setCommentIds(ids); if (latestVersion) setNeedsRegeneration(true); }} locked={processing} /><p className="field-help">Sau khi đổi bình luận hoặc thời lượng, chọn soạn lại để cập nhật kịch bản.</p></details>
+            <div className="studio-control-section"><h3>Giọng đọc</h3><div className="studio-form-row"><label>Giọng thuyết minh<select value={voiceProfileId} onChange={event => setVoiceProfileId(event.target.value)}>{compatibleProfiles.map(profile => <option key={profile.id} value={profile.id}>{profile.name}</option>)}</select></label><label>Tốc độ đọc<select name="speakingRate" value={speakingRate} onChange={event => setSpeakingRate(Number(event.target.value))}><option value="0.85">Chậm · 0.85×</option><option value="1">Tự nhiên · 1×</option><option value="1.15">Nhanh · 1.15×</option>{![0.85,1,1.15].includes(speakingRate) && <option value={speakingRate}>{speakingRate}×</option>}</select></label></div>
+              <button className="button secondary small" type="button" onClick={() => void requestAudioPreview()} disabled={busy || processing || dirty || !latestVersion || !voiceProfileId}>Nghe thử giọng</button><p className="field-help">{latestVersion ? 'Nghe một câu mẫu ngắn với giọng và tốc độ đang chọn.' : 'Soạn bản nháp bên dưới để nghe thử giọng.'}</p>
+              {profiles.data?.items.find(profile => profile.id === voiceProfileId)?.provider === 'mock' && <p className="notice warning">Giọng mock chỉ tạo âm thử. Chọn VieNeu local để có lời đọc.</p>}
+              {latestVersion?.audioAssets.filter(audio => audio.segmentId === 'voice-preview').slice(-1).map(audio => <audio key={audio.id} aria-label="Bản nghe thử giọng" controls preload="none" src={`/api/v1/media/${audio.mediaAsset.id}`} />)}
+            </div>
+            <div className="studio-control-section"><h3>Phụ đề</h3><div className="caption-choices" role="group" aria-label="Mẫu phụ đề">{(['ClassicCaption','KaraokeHighlight'] as const).map(preset => <button key={preset} type="button" className={`caption-choice ${subtitlePreset === preset ? 'selected' : ''}`} aria-pressed={subtitlePreset === preset} onClick={() => setSubtitlePreset(preset)}><span>{preset === 'KaraokeHighlight' ? <>Một <mark>câu chuyện</mark> hay</> : 'Một câu chuyện hay'}</span><small>{preset === 'KaraokeHighlight' ? 'Tô sáng từng từ' : 'Phụ đề rõ nét'}</small></button>)}</div><input type="hidden" name="subtitlePreset" value={subtitlePreset} />
+              <div className="studio-form-row"><label>Cỡ chữ<select value={mediaSettings.captionSize} onChange={event => setMediaSettings(current => ({ ...current, captionSize: Number(event.target.value) }))}>{[44,52,58,64,72, ...([44,52,58,64,72].includes(mediaSettings.captionSize) ? [] : [mediaSettings.captionSize])].map(size => <option key={size} value={size}>{size}px</option>)}</select></label><label>Màu chữ<input type="color" value={mediaSettings.captionColor} onChange={event => setMediaSettings(current => ({ ...current, captionColor: event.target.value }))} /></label><label>Vị trí phụ đề<select value={mediaSettings.captionPosition} onChange={event => setMediaSettings(current => ({ ...current, captionPosition: event.target.value as 'BOTTOM' | 'CENTER' }))}><option value="BOTTOM">Phía dưới</option><option value="CENTER">Giữa khung</option></select></label></div>
+            </div>
+            <div className="studio-control-section"><h3>Nền & âm nhạc</h3>{backgrounds.error && <ErrorNotice message={backgrounds.error} retry={backgrounds.reload} />}{music.error && <ErrorNotice message={music.error} retry={music.reload} />}
+              <StudioMediaCatalog disabled={busy || processing} onInstalled={(items, select) => { backgrounds.reload(); music.reload(); const item = select ? items[0] : undefined; if (item?.kind === 'BACKGROUND') { setSelectedBackground(item.id); setMediaSettings(current => ({ ...current, backgroundStartSec: 0 })); } else if (item) setMediaSettings(current => ({ ...current, musicAssetId: item.id })); }} />
+              <div className="studio-form-row"><label>Ảnh / video nền<select value={selectedBackground} onChange={event => { setSelectedBackground(event.target.value); setMediaSettings(current => ({ ...current, backgroundStartSec: 0 })); }}><option value="">Nền mặc định</option>{backgrounds.data?.items.map(asset => <option key={asset.id} value={asset.id}>{asset.mimeType === 'video/mp4' ? '▶ ' : ''}{asset.metadata?.name || asset.id.slice(0,8)}</option>)}</select></label>{selectedBackgroundAsset?.mimeType === 'video/mp4' && <label>Bắt đầu nền (giây)<input type="number" min="0" max={Math.max(0, (selectedBackgroundAsset.metadata?.durationMs ?? 1000) / 1000 - 1)} step="0.1" value={mediaSettings.backgroundStartSec} onChange={event => setMediaSettings(current => ({ ...current, backgroundStartSec: Number(event.target.value) }))} /><small className="field-help">Lặp từ điểm này; tắt tiếng video gốc.</small></label>}</div>
+              {selectedBackgroundAsset && <figure className="studio-selected-background"><figcaption>Nền đang chọn · {selectedBackgroundAsset.metadata?.name || 'Nền của bạn'}</figcaption>{selectedBackgroundAsset.mimeType === 'video/mp4' ? <video key={`${selectedBackground}:${mediaSettings.backgroundStartSec}`} aria-label="Xem trước nền đang chọn" src={`/api/v1/media/${selectedBackground}#t=${mediaSettings.backgroundStartSec}`} controls autoPlay muted loop playsInline /> : <img src={`/api/v1/media/${selectedBackground}`} alt="Xem trước nền đang chọn" />}</figure>}
+              <label>Nhạc nền<select value={mediaSettings.musicAssetId ?? ''} onChange={event => setMediaSettings(current => ({ ...current, musicAssetId: event.target.value || null }))}><option value="">Không có nhạc</option>{music.data?.items.map(asset => <option key={asset.id} value={asset.id}>{asset.metadata?.name || asset.id.slice(0,8)}</option>)}</select></label>
+              {mediaSettings.musicAssetId && <><audio ref={selectedMusicPlayer} key={mediaSettings.musicAssetId} aria-label="Nghe nhạc nền" controls autoPlay onPlay={event => playOneAudio(event.currentTarget)} src={`/api/v1/media/${mediaSettings.musicAssetId}`} /><label>Âm lượng nhạc · {Math.round(mediaSettings.musicVolume * 100)}%<input aria-label="Âm lượng nhạc" type="range" min="0" max="0.5" step="0.01" value={mediaSettings.musicVolume} onChange={event => setMediaSettings(current => ({ ...current, musicVolume: Number(event.target.value) }))} /></label><label className="checkbox-label"><input type="checkbox" checked={mediaSettings.ducking} onChange={event => setMediaSettings(current => ({ ...current, ducking: event.target.checked }))} /><span>Giảm nhạc khi có lời đọc</span></label></>}
+            </div>
+            <details className="studio-advanced"><summary>Bố cục và quyền riêng tư</summary><div className="studio-form-row"><label>Template<select name="templateId" value={templateId} onChange={event => setTemplateId(event.target.value as typeof templateId)}>{templates.data?.items.filter(item => item.status === 'READY').map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><label>Phong cách kể<select name="style" value={style} onChange={event => setStyle(event.target.value as typeof style)}><option value="STORYTELLING">Kể chuyện</option><option value="SOCIAL_COMMENTARY">Bình luận xã hội</option></select></label><label>Giao diện thẻ<select name="theme" value={theme} onChange={event => setTheme(event.target.value as typeof theme)}><option value="dark">Tối</option><option value="light">Sáng</option></select></label></div><label className="checkbox-label"><input type="checkbox" checked={anonymizeAuthors} onChange={event => setAnonymizeAuthors(event.target.checked)} /><span>Che tên và avatar trong video</span></label><label className="checkbox-label"><input type="checkbox" checked={showEngagement} onChange={event => setShowEngagement(event.target.checked)} /><span>Hiện số tương tác đã có trên thẻ dựng</span></label><p className="field-help">Ảnh chụp gốc giữ nguyên số tương tác và nội dung. Chế độ thẻ chỉ dùng khi nguồn không có ảnh chụp.</p></details>
+            <button className="button secondary" disabled={!compatibleProfiles.length || processing || dirty || Boolean(source?.lifecycle.blockedReason)}>{latestVersion ? 'Soạn lại từ bình luận đã chọn' : 'Tạo bản nháp kịch bản'} →</button>
+          </fieldset></form>}
+        </section>}
+        {canEdit && <><VoiceLibrary enabled={profiles.data?.items.some(profile => profile.provider === 'vieneu') ?? false} onCreated={id => { setPendingVoiceId(id); profiles.reload(); }} /><StudioAssetUpload disabled={processing} onUploaded={(kind,id) => { if (kind === 'BACKGROUND') { setSelectedBackground(id); setMediaSettings(current => ({ ...current, backgroundStartSec: 0 })); backgrounds.reload(); } else { setMediaSettings(current => ({ ...current, musicAssetId: id })); music.reload(); } }} /></>}
+      </div>
+      <aside className="studio-preview-column">
+        {video?.mediaAsset && <Link className="button" href="#video-review">Xem và duyệt bản MP4 đã tạo ↑</Link>}
+        {story && latestVersion && previewScript ? <StudioDraftPreview backgroundPending={Boolean(selectedBackground && !selectedBackgroundAsset)} recorded={recordedPreview} onStatus={setPreviewProblem} post={story.post} storyId={story.id} versionId={latestVersion.id} script={previewScript} speakingRate={speakingRate} templateId={templateId} subtitlePreset={subtitlePreset} theme={theme} anonymizeAuthors={anonymizeAuthors} showEngagement={showEngagement} backgroundAssetId={selectedBackground || null} backgroundDurationMs={selectedBackgroundAsset?.mimeType === 'video/mp4' ? selectedBackgroundAsset.metadata?.durationMs : undefined} mediaSettings={mediaSettings} attribution={{ required: story.post.rights?.[0]?.attributionRequired ?? false, text: story.post.rights?.[0]?.attributionText ?? null }} /> : <section className="panel studio-live-preview" id="studio-live-preview"><div className="preview-heading"><div><span className="eyebrow">XEM TRƯỚC</span><h2>Video của bạn</h2></div><span className="badge neutral">9:16</span></div><div className="preview-placeholder"><span>▶</span><strong>Câu chuyện bắt đầu từ đây</strong><p>Chọn bình luận và soạn bản nháp để xem bố cục video.</p></div></section>}
+        {latestVersion && canEdit && <section className="panel studio-export-bar"><span className="eyebrow">XUẤT VIDEO</span><h3>{processing ? humanStage(run?.currentStage ?? null) : dirty ? 'Lưu bản chỉnh sửa trước' : renderBlockers.length ? 'Cần kiểm tra thiết lập' : 'Sẵn sàng dựng video'}</h3><p className="field-help">MP4 · 1080 × 1920 · 30fps · lưu ở máy local</p>{renderBlockers.length > 0 && <ul className="export-blockers" id="studio-render-blockers">{renderBlockers.map(reason => <li key={reason}>{reason}</li>)}</ul>}<button className="button" onClick={() => void renderLatest()} disabled={busy || processing || renderBlockers.length > 0} aria-describedby={renderBlockers.length ? 'studio-render-blockers' : undefined}>{processing ? 'Đang xử lý…' : 'Tạo video MP4'}</button></section>}
+        {run && <details className="panel studio-run" open={processing || run.status.startsWith('FAILED') || run.status.startsWith('BLOCKED')}><summary className="studio-progress-summary">Tiến độ · {run.status === 'CANCELLED' ? 'Đã hủy' : humanStage(run.currentStage)}</summary><div className="studio-run-content"><p>{run.status.replaceAll('_',' ')}</p><progress max="1" value={run.renderJob?.progress ?? 0} aria-label="Production progress" /><ol className="stage-list">{run.stages.map(stage => <li key={stage.name} className={stage.status === 'SUCCEEDED' ? 'done' : ''}><span>{humanStage(stage.name)}</span><span>{stage.status}</span></li>)}</ol>{run.errorCode && <p className="notice error">{mediaFailureMessage(run.errorCode)}</p>}{mayAdmin(role) && run.status.startsWith('FAILED') && <button className="button secondary small" onClick={() => void retryFailedRun()} disabled={busy}>Thử lại lượt lỗi</button>}{processing && <><label className="checkbox-label"><input type="checkbox" checked={confirmCancel} onChange={event => setConfirmCancel(event.target.checked)} /><span>Xác nhận hủy lượt đang chạy</span></label><button className="button secondary small" disabled={busy || !confirmCancel} onClick={() => void cancelRun()}>Hủy lượt xử lý</button></>}</div></details>}
+        {durationFit.success && <p className="notice" role="status">Lời đọc: {(durationFit.data.durationMs/1000).toFixed(1)} / {durationFit.data.targetDurationSec} giây. {alignedCaptions ? 'Đã căn phụ đề theo audio.' : 'Đang chờ căn phụ đề.'}</p>}
+      </aside>
+    </div>
   </>;
 }

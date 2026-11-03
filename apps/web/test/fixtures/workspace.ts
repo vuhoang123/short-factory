@@ -3,7 +3,7 @@ import type { Page } from '@playwright/test';
 export const channelId = '11111111-1111-4111-8111-111111111111';
 export const now = '2026-10-27T12:00:00.000Z';
 
-export async function mockWorkspace(page: Page) {
+export async function mockWorkspace(page: Page, role: 'OWNER' | 'ADMIN' | 'REVIEWER' | 'EDITOR' | 'VIEWER' = 'OWNER') {
   const mutations: Array<{ path: string; body: unknown }> = [];
   let topicRuleRequests = 0;
   let ruleVersion = 1;
@@ -30,7 +30,7 @@ export async function mockWorkspace(page: Page) {
     const data: Record<string, unknown> = {
       '/studio/overview': { counts: { discovered: 0, selected: 0, scripting: 0, rendering: 0, review: 0, approved: 0, failed: 0, scheduled: 0, published: 0 }, recent: [], publishing: 'BLOCKED_EXTERNAL' },
       '/studio/content': { items: [], nextCursor: null },
-      '/auth/me': { user: { id: 'owner-1', email: 'fixture@example.org', name: 'Fixture owner' }, workspaces: [{ id: 'workspace-1', name: 'UI contract fixture', role: 'OWNER' }], activeWorkspaceId: 'workspace-1' },
+      '/auth/me': { user: { id: 'owner-1', email: 'fixture@example.org', name: 'Fixture owner' }, workspaces: [{ id: 'workspace-1', name: 'UI contract fixture', role }], activeWorkspaceId: 'workspace-1' },
       '/channels': { items: [{ id: channelId, name: 'Community stories', language: 'vi' }] },
       '/topic-rules': { items: [{ id: 'topic-rule-1', workspaceId: 'workspace-1', channelId, name: 'Giật kinh hồn', keywords: ['giật kinh hồn'], hashtags: [], topics: ['bất ngờ'], language: 'vi', allow: [], deny: [], minimumScore: 55, enabled: true }] },
       '/workspaces/workspace-1/members': { items: [] },
@@ -43,7 +43,7 @@ export async function mockWorkspace(page: Page) {
       '/automation/approvals': { items: pending ? [{ id: 'video-1', title: 'An owned community story', mediaAssetId: null, story: { post: { title: 'Community source', body: 'An authorized synthetic story.', rights: [{ reviewStatus: 'APPROVED', basis: 'OWNED' }] } }, qualityReport: { status: 'NEEDS_REVIEW', score: 90, issues: ['Approximate alignment requires review'] }, targetPlatforms: ['YOUTUBE'] }] : [] },
       '/videos': { items: [{ id: 'approved-video-1', channelId, title: 'Approved experiment video', status: 'APPROVED', reviewStatus: 'APPROVED', mediaAssetId: 'media-1', createdAt: now, durationMs: 1000 }] },
       '/dashboard': { phase: 'PHASE_3', counts: { posts: 0, comments: 0, channels: 1, sources: 1, pendingRights: 0, blockedRights: 0, candidates: 0, pendingSources: 0 }, integrations: { sources: 'AVAILABLE', media: 'AVAILABLE', publishing: 'BLOCKED_EXTERNAL', tiktok: 'BLOCKED_EXTERNAL' }, blockers: [] },
-      '/posts': { items: [] }, '/candidates': { items: [] }, '/backgrounds': { items: [] }, '/video-templates': { items: [] },
+      '/posts': { items: [] }, '/candidates': { items: [] }, '/backgrounds': { items: [] }, '/music': { items: [] }, '/studio-presets': { items: [] }, '/studio-assets': { items: [] }, '/video-templates': { items: [] },
       '/production-runs': { items: [], nextCursor: null },
       '/usage': { dailyEstimatedUsd: 0.12, monthlyEstimatedUsd: 0.12, reservedUsd: 0, billedUsd: null, byStage: [{ stage: 'TTS_GENERATION', estimatedUsd: 0.12, units: 400 }], alerts: [] },
       '/budget-policy': { dailyLimitUsd: 5, monthlyLimitUsd: 50, warningThreshold: 0.8 },

@@ -32,16 +32,35 @@ try {
   const url = 'https://www.facebook.com/owned-fixture/posts/extension';
   const shareUrl = 'https://www.facebook.com/share/p/owned-extension/';
   const html = '<!doctype html><meta charset="utf-8"><style>body{background:#ddd;font:20px Arial;margin:50px}article{background:white;width:650px;margin:20px;padding:16px;box-sizing:border-box}h3{font:700 20px Arial;margin:0;display:flex;gap:12px;align-items:center}h3 img{width:40px;height:40px;background:#315bda}p{line-height:1.5}.reacts{padding:12px;background:#e9eefb;color:#203a72}</style><article role="article"><h3><img src="data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'40\' height=\'40\'%3E%3Crect width=\'40\' height=\'40\' fill=\'%23315bda\'/%3E%3C/svg%3E"><a>Chủ bài thử</a></h3><p data-ad-preview="message">Đây là bài viết tổng hợp do dự án tạo để thử extension chụp ảnh nguồn.</p><div class="reacts">👍 123 · DỮ LIỆU THỬ</div>' + [10, 90, 50, 70, 30].map((reacts, index) => `<article role="article" aria-label="Bình luận của Bạn đọc ${index + 1}"><h3><a role="link"><span dir="auto">Bạn đọc ${index + 1}</span></a></h3><p dir="auto">Bình luận thử số ${index + 1} về hoạt động đọc sách cùng hàng xóm.</p><div class="reacts" aria-label="${reacts} cảm xúc">👍 ${reacts}</div></article>`).join('') + '</article>';
-  let externalRequests = 0;
+  let externalRequests = 0; const unexpectedUrls = [];
   await context.route('**/*', route => {
     const target = route.request().url();
     if (target === 'http://127.0.0.1:3000/extension-owned-fixture') return route.fulfill({ contentType: 'text/html', body: '<!doctype html><meta charset="utf-8"><title>Owned local Studio bridge test</title>' });
+    if (target.startsWith('http://127.0.0.1:3000/studio?')) return route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Studio recovery fixture</title>' });
     if (target === url) return route.fulfill({ contentType: 'text/html', body: html });
-    if (target === shareUrl) return route.fulfill({ status: 302, headers: { Location: url } });
+    if (target === shareUrl) return route.fulfill({ contentType: 'text/html', body: `<script>location.replace(${JSON.stringify(url)})</script>` });
     if (target === 'https://www.facebook.com/owned-fixture/posts/other') return route.fulfill({ contentType: 'text/html', body: html });
-    if (target.startsWith('http:') || target.startsWith('https:')) { externalRequests++; return route.abort(); }
+    if (target.startsWith('http:') || target.startsWith('https:')) { externalRequests++; unexpectedUrls.push(target); return route.abort(); }
     return route.continue();
   });
+  const unbound = await context.newPage(); await unbound.goto(url);
+  const missingPopup = await context.newPage(); await missingPopup.goto(`chrome-extension://${extensionId}/popup.html`);
+  await unbound.bringToFront();
+  const missing = await missingPopup.evaluate(() => chrome.runtime.sendMessage({ type: 'CAPTURE_STATUS' }));
+  assert.equal(missing.ready, false); assert.equal(missing.reason, 'NO_REQUEST'); assert.equal(missing.recovery, 'OPEN_STUDIO');
+  await missingPopup.locator('#confirm').check();
+  await missingPopup.waitForFunction(() => document.querySelector('#recover').hidden === false);
+  assert.equal(await missingPopup.locator('#capture').isDisabled(), true, 'Confirmation alone cannot create a capture request');
+  await missingPopup.screenshot({ path: path.join(destination, 'popup-no-request.png'), clip: { x: 0, y: 0, width: 400, height: 600 } });
+  await unbound.bringToFront();
+  const recovered = context.waitForEvent('page');
+  assert.equal((await missingPopup.evaluate(() => chrome.runtime.sendMessage({ type: 'OPEN_STUDIO' }))).ok, true);
+  const recoveredStudio = await recovered;
+  await recoveredStudio.waitForURL(value => value.pathname === '/studio');
+  assert.equal(new URL(recoveredStudio.url()).searchParams.get('captureUrl'), url);
+  assert.equal(new URL(recoveredStudio.url()).searchParams.get('mode'), 'import');
+  assert.equal((await worker.evaluate(() => chrome.storage.session.get('pendingCapture'))).pendingCapture, undefined, 'Opening Studio must not silently start capture');
+  await recoveredStudio.close(); await missingPopup.close(); await unbound.close();
   const studio = await context.newPage(); await studio.goto('http://127.0.0.1:3000/extension-owned-fixture');
   const requestId = randomUUID(), jobId = randomUUID();
   await studio.evaluate(() => {
@@ -49,6 +68,7 @@ try {
     window.addEventListener('message', event => {
       if (event.source !== window || event.origin !== location.origin || event.data?.source !== 'shorts-factory-extension') return;
       window.captureMessages.push(event.data);
+      if (event.data.type === 'PREPARED') Object.assign(document.body.dataset, { captureJob: event.data.jobId, captureRequest: event.data.requestId, captureStatus: 'WAITING_BROWSER' });
       if (['CAPTURE_IMAGE', 'CAPTURE_RESULT'].includes(event.data.type)) window.postMessage({ source: 'shorts-factory', type: 'CAPTURE_ACK', requestId: event.data.requestId, jobId: event.data.jobId, imageId: event.data.imageId, ok: true }, location.origin);
     });
   });
@@ -112,6 +132,39 @@ try {
   await sharePage.goto('https://www.facebook.com/owned-fixture/posts/other');
   const wrongTabStatus = await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'CAPTURE_STATUS' }));
   assert.equal(wrongTabStatus.ready, false, 'Navigating to another source must invalidate capture');
+  assert.equal(wrongTabStatus.recovery, 'OPEN_SOURCE');
+  const beforeRecovery = context.pages().length;
+  assert.equal((await popup.evaluate(({ requestId, jobId }) => chrome.runtime.sendMessage({ type: 'OPEN_SOURCE', requestId, jobId }), { requestId: shareRequestId, jobId: shareJobId })).ok, true);
+  await sharePage.waitForURL(url);
+  await sharePage.bringToFront();
+  for (let attempt = 0; attempt < 40; attempt++) {
+    if ((await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'CAPTURE_STATUS' }))).ready) break;
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  assert.equal((await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'CAPTURE_STATUS' }))).ready, true, 'Explicit recovery reopens only the bound source and verifies the redirect again');
+  assert.equal(context.pages().length, beforeRecovery);
+  await studio.evaluate(() => { delete document.body.dataset.captureJob; });
+  const staleStudio = await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'CAPTURE_STATUS' }));
+  assert.equal(staleStudio.reason, 'STUDIO_UNAVAILABLE'); assert.equal(staleStudio.ready, false);
+  assert.equal((await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'START_CAPTURE', confirmed: true }))).ok, false);
+  const resumeCreated = context.waitForEvent('page');
+  assert.equal((await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'OPEN_STUDIO' }))).ok, true);
+  const resumeStudio = await resumeCreated; await resumeStudio.waitForURL(value => value.pathname === '/studio');
+  const resumeParams = new URL(resumeStudio.url()).searchParams;
+  assert.equal(resumeParams.get('captureJob'), shareJobId); assert.equal(resumeParams.get('captureRequest'), shareRequestId);
+  assert.equal(resumeParams.get('captureUrl'), shareUrl);
+  await resumeStudio.evaluate(() => {
+    window.addEventListener('message', event => {
+      if (event.source === window && event.origin === location.origin && event.data?.source === 'shorts-factory-extension' && event.data.type === 'PREPARED') Object.assign(document.body.dataset, { captureJob: event.data.jobId, captureRequest: event.data.requestId, captureStatus: 'WAITING_BROWSER' });
+    });
+  });
+  const beforeResume = context.pages().length;
+  await resumeStudio.evaluate(({ requestId, jobId, url }) => window.postMessage({ source: 'shorts-factory', type: 'PREPARE_CAPTURE', requestId, jobId, url }, location.origin), { requestId: shareRequestId, jobId: shareJobId, url: shareUrl });
+  await resumeStudio.waitForFunction(jobId => document.body.dataset.captureJob === jobId, shareJobId);
+  await sharePage.bringToFront();
+  assert.equal((await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'CAPTURE_STATUS' }))).ready, true, 'A replacement Studio reconnects the existing job and source tab');
+  assert.equal(context.pages().length, beforeResume, 'Resuming must reuse the already expanded source tab');
+  await resumeStudio.close();
   const cancelRequestId = randomUUID(), cancelJobId = randomUUID();
   const cancelCreated = context.waitForEvent('page');
   await studio.evaluate(({ requestId, jobId, url }) => window.postMessage({ source: 'shorts-factory', type: 'PREPARE_CAPTURE', requestId, jobId, url }, location.origin), { requestId: cancelRequestId, jobId: cancelJobId, url });
@@ -119,8 +172,8 @@ try {
   assert.equal((await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'CANCEL_FROM_POPUP' }))).ok, true);
   await studio.waitForFunction(jobId => window.captureMessages.some(message => message.type === 'CAPTURE_CANCELLED' && message.jobId === jobId), cancelJobId);
   assert.equal((await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'CAPTURE_STATUS' }))).ready, false, 'A cancelled request cannot be restarted from the popup');
-  assert.equal(externalRequests, 0);
-  const evidence = { status: 'PASS', sameBrowserTab: true, realExtensionLoaded: true, source: 'owned_synthetic_DOM', post: 1, comments: 5, images: 12, reactionsSorted: true, restoredViewport: true, debuggerDetached: true, replayReusesTab: true, shareRedirectBound: true, wrongPostBlocked: true, popupCancelNotifiesStudio: true, cancelledRequestBlocked: true, externalRequests };
+  assert.equal(externalRequests, 0, JSON.stringify(unexpectedUrls));
+  const evidence = { status: 'PASS', sameBrowserTab: true, realExtensionLoaded: true, source: 'owned_synthetic_DOM', post: 1, comments: 5, images: 12, reactionsSorted: true, restoredViewport: true, debuggerDetached: true, replayReusesTab: true, shareRedirectBound: true, wrongPostBlocked: true, popupCancelNotifiesStudio: true, cancelledRequestBlocked: true, missingRequestExplained: true, studioRecoveryPrefillsOnly: true, exactTabRecovery: true, staleStudioBlocked: true, staleStudioResumesExistingJob: true, externalRequests };
   await writeFile(path.join(destination, 'evidence.json'), JSON.stringify(evidence, null, 2));
   console.log(JSON.stringify(evidence));
 } finally { await context.close(); }

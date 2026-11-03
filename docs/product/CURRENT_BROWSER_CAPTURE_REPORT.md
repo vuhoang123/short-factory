@@ -42,3 +42,26 @@ The browser extension test exercises real extension capture/bridge behavior with
 The user must load the extension once; websites cannot install it automatically. No real Facebook account has been used in automated tests. Platform markup, group access, account login or browser policy can still prevent capture. Only loaded, uniquely matched comments are considered; the app does not promise all comments or bypass controls. Existing rights review and publishing gates remain unchanged.
 
 Changed files: API content/routes and capture integration tests; shared capture contracts; discovery capture/inbox cleanup; current-browser UI/message helper and tests; extension files/build/test scripts; local setup; source/API/local guides and audit references. The media renderer/audio model are unchanged by this follow-up.
+
+## Disabled capture button follow-up — 2026-11-03
+
+The reported popup had a checked confirmation box and an empty source line. That state means the extension has no pending Studio request; the old popup incorrectly showed the generic wrong-tab guidance. A Studio page opened before installation also lacked the injected bridge. Reloading extension files could leave an invalidated bridge that still falsely answered PING.
+
+Extension **1.0.1** distinguishes missing request, expiry, cancellation, completion, missing Studio, wrong tab, changed source and unverified share redirect. It checks the live Studio job/request marker before enabling capture. PING now verifies the actual extension runtime. The popup offers an explicit recovery button: open Studio with a validated source prefill, or reopen only the exact requested source. Confirmation alone never starts or unlocks an unbound capture.
+
+For a closed/stale Studio, recovery includes the existing job/request identity. The authenticated UI first reads the durable job and matches the server-owned current-browser source; only then does it reconnect the extension. The existing source tab and loaded comments are reused. No second capture job is created. Foreign workspaces, mismatched sources and expired jobs cannot be rebound.
+
+The prepared runtime directory has been updated to 1.0.1. The user must click Reload in `chrome://extensions` / `edge://extensions`, then reload Studio. No installed browser extension or account session was changed automatically.
+
+Verification:
+
+- `node --test scripts/capture-popup.test.mjs`: **4 passed**.
+- `pnpm exec vitest run apps/web/lib/browser-capture.test.ts`: **5 passed**.
+- `node scripts/test-capture-extension.mjs`: **passed**, including no-request diagnosis, exact-tab/share recovery, stale Studio reconnection without another source tab, and 12 actual PNGs from an owned post + 5 comments. Zero external network requests. Evidence: `test-results/current-browser-extension/evidence.json`, `popup-no-request.png`.
+- `LOCAL_EXPORT_UI_BASE_URL=http://127.0.0.1:3000 pnpm --filter @shorts-factory/web exec playwright test --config playwright-ui.config.ts local-export-ui.spec.ts`: **17 passed**, including allowed/mismatched/foreign-workspace reconnection with no new capture mutation.
+- PostgreSQL `apps/api/test/source-capture.integration.test.ts` using configured `TEST_DATABASE_URL`: **7 passed**, including source metadata only for the requesting owner and live current-browser jobs.
+- `pnpm lint`, API/web typechecks and `git diff --check`: **passed**. Initial UI/DB runs failed while local services were stopped; reruns passed after startup with the configured test database.
+
+Runtime repair: another workspace owns port 3001. `scripts/local-export.mjs` now honors `API_PORT` and passes the matching `API_URL` to Web. This machine's ignored `.env` uses 3004; Web remains at 3000 and the other workspace was left running. Web/API/speech/capture health checks all return 200. Restart with `pnpm local:export`; on another machine keep the default API port unless it is occupied.
+
+Changed files for this fix: `browser-extension/{background,bridge,protocol,popup}.js`, popup markup, manifest/README; web browser-capture helper/component/unit and UI tests; API capture status/integration tests; extension test script and popup unit script; local launcher; API/capture documentation. No real Facebook account was used in verification; live platform markup and the user's manual extension reload remain outside these synthetic tests.

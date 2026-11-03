@@ -1,0 +1,227 @@
+{
+  "title": "Chọn hướng redesign Shorts Factory",
+  "question": "Các hướng giữ nguyên chức năng và luồng local. Chọn bố cục bạn muốn dùng hằng ngày; mình sẽ triển khai xuyên suốt các màn.",
+  "options": [
+    {
+      "id": "video-focus",
+      "kind": "assigned",
+      "label": "Tập trung vào video",
+      "kicker": "THE ROLL",
+      "lineage": "Phụ đề và nhịp dựng phim",
+      "thesis": "Biên tập và xem video trong cùng một bàn làm việc, không cuộn qua hàng loạt card.",
+      "palette": [
+        "#17252d",
+        "#f4f6f7",
+        "#ffffff",
+        "#c74b24"
+      ],
+      "materials": [
+        "nền preview tối",
+        "chữ sans rõ",
+        "thanh cảnh đồng bộ"
+      ],
+      "viewport": "Điều hướng gọn bên trái; nội dung và thiết lập ở giữa; video cùng nút xuất ở bên phải.",
+      "risk": "Mật độ cao hơn luồng từng bước, cần phân cấp tốt để người mới không ngợp.",
+      "html": ".impeccable/mocks/decision/video-focus.html",
+      "comp": ".impeccable/mocks/decision/video-focus.png",
+      "raised": [
+        {
+          "from": "wayfinding",
+          "raise": "Luôn có một thao tác tiếp theo và lý do chặn rõ ràng."
+        },
+        {
+          "from": "folio",
+          "raise": "Ảnh nguồn và các cảnh xem trước dùng cùng tỷ lệ để dễ đối chiếu."
+        }
+      ]
+    },
+    {
+      "id": "guided-blue",
+      "kind": "pick",
+      "label": "Rõ ràng từng bước",
+      "kicker": "IMPECCABLE’S PICK",
+      "lineage": "Hệ thống tra cứu và thẻ thư viện",
+      "thesis": "Mỗi lúc chỉ làm việc cần thiết: nguồn, lời đọc, giao diện, rồi xuất video.",
+      "palette": [
+        "#183a65",
+        "#eef3fa",
+        "#ffffff",
+        "#215bc0"
+      ],
+      "materials": [
+        "mặt làm việc sáng",
+        "màu xanh chỉ hướng",
+        "nhãn tiếng Việt"
+      ],
+      "viewport": "Ô dán link và bước hiện tại ở giữa; bản xem trước luôn bên cạnh; quản trị nằm trong mục phụ.",
+      "risk": "Quen thuộc và dễ dùng, nhưng ít khác biệt hơn các hướng còn lại.",
+      "html": ".impeccable/mocks/decision/guided-blue.html",
+      "comp": ".impeccable/mocks/decision/guided-blue.png"
+    },
+    {
+      "id": "journey",
+      "kind": "challenger",
+      "catalogId": "vernacular-ephemera-jet-age-ticket-wallet",
+      "label": "Hành trình tới MP4",
+      "lineage": "Hành trình tới MP4",
+      "palette": [
+        "#16334c",
+        "#f7f8fa",
+        "#b8353d"
+      ],
+      "thesis": "Các bước nối thành một hành trình có trạng thái và có thể quay lại.",
+      "viewport": "Thanh bước ngang, vùng công việc chính và bản nháp rõ ràng; lịch sử giữ mọi lượt tạo.",
+      "risk": "Có thể thêm một lần chuyển bước khi cần chỉnh nhiều mục cùng lúc.",
+      "verdict": "competitive",
+      "materials": [
+        "thành phần web chuẩn",
+        "nhãn rõ ràng"
+      ],
+      "case": "Giữ độ rõ của luồng; mức phù hợp với thói quen sáng tạo khác hướng chính.",
+      "html": ".impeccable/mocks/decision/journey.html",
+      "comp": ".impeccable/mocks/decision/journey.png"
+    },
+    {
+      "id": "easy-studio",
+      "kind": "challenger",
+      "catalogId": "digital-design-canon-warm-consumer-app-surface",
+      "label": "Studio dễ bắt đầu",
+      "lineage": "Studio dễ bắt đầu",
+      "palette": [
+        "#493b36",
+        "#f6f0eb",
+        "#ffffff",
+        "#ae4228"
+      ],
+      "thesis": "Ưu tiên nhãn đời thường, vùng bấm rộng và các lựa chọn xuất hiện đúng lúc.",
+      "viewport": "Vùng tạo video nổi bật, preview bên phải, thanh điều hướng dưới trên điện thoại.",
+      "risk": "Khoảng thở lớn hơn nên bảng quản trị sẽ có mật độ thấp hơn.",
+      "verdict": "competitive",
+      "materials": [
+        "thành phần web chuẩn",
+        "nhãn rõ ràng"
+      ],
+      "case": "Giữ độ rõ của luồng; mức phù hợp với thói quen sáng tạo khác hướng chính.",
+      "html": ".impeccable/mocks/decision/easy-studio.html",
+      "comp": ".impeccable/mocks/decision/easy-studio.png"
+    },
+    {
+      "id": "map",
+      "kind": "challenger",
+      "catalogId": "notation-diagram-systems-orienteering-map",
+      "label": "Bản đồ định hướng",
+      "lineage": "Bản đồ định hướng",
+      "palette": [
+        "#ffffff",
+        "#697547",
+        "#78466e"
+      ],
+      "thesis": "Dẫn đường qua các quyết định.",
+      "viewport": "Trạng thái và bước tiếp theo cùng một vùng.",
+      "risk": "Ngôn ngữ bản đồ không gắn với tạo video.",
+      "verdict": "declined",
+      "materials": [
+        "thành phần web chuẩn",
+        "nhãn rõ ràng"
+      ],
+      "case": "Kém phù hợp hơn cho việc tạo video cá nhân và làm luồng chính khó nhận biết hơn.",
+      "kept": "Tách dữ liệu nguồn bất biến khỏi lựa chọn biên tập."
+    },
+    {
+      "id": "folio",
+      "kind": "challenger",
+      "catalogId": "editorial-sequence-montage-botanical-folio-season",
+      "label": "Chuỗi hình ảnh theo giai đoạn",
+      "lineage": "Chuỗi hình ảnh theo giai đoạn",
+      "palette": [
+        "#f2eddf",
+        "#3d6753",
+        "#b13d32"
+      ],
+      "thesis": "So sánh sự thay đổi qua từng giai đoạn.",
+      "viewport": "Ảnh nguồn và kết quả cùng tỷ lệ để đối chiếu.",
+      "risk": "Liên tưởng thực vật không giúp nhận ra một công cụ video.",
+      "verdict": "declined",
+      "materials": [
+        "thành phần web chuẩn",
+        "nhãn rõ ràng"
+      ],
+      "case": "Kém phù hợp hơn cho việc tạo video cá nhân và làm luồng chính khó nhận biết hơn.",
+      "kept": "Giữ tỷ lệ preview nhất quán."
+    },
+    {
+      "id": "wayfinding",
+      "kind": "challenger",
+      "catalogId": "wayfinding-cartography-signage-terminal-yellow-wayfinding",
+      "label": "Chỉ dẫn rõ tại mỗi bước",
+      "lineage": "Chỉ dẫn rõ tại mỗi bước",
+      "palette": [
+        "#f3d335",
+        "#17222b",
+        "#ffffff"
+      ],
+      "thesis": "Một thao tác tiếp theo tại mỗi điểm quyết định.",
+      "viewport": "Bước đang làm có hướng dẫn ngắn và hành động cụ thể.",
+      "risk": "Màu chỉ đường đậm dễ lấn át ảnh/video.",
+      "verdict": "declined",
+      "materials": [
+        "thành phần web chuẩn",
+        "nhãn rõ ràng"
+      ],
+      "case": "Kém phù hợp hơn cho việc tạo video cá nhân và làm luồng chính khó nhận biết hơn.",
+      "kept": "Luôn hiển thị hành động tiếp theo."
+    },
+    {
+      "id": "exposure",
+      "kind": "challenger",
+      "catalogId": "operate-b-exposure-record-zone-sheets",
+      "label": "Độ sáng và lớp ảnh",
+      "lineage": "Độ sáng và lớp ảnh",
+      "palette": [
+        "#171717",
+        "#ededed",
+        "#a2316b"
+      ],
+      "thesis": "Làm nổi bật nội dung qua độ tương phản.",
+      "viewport": "Các vùng ảnh tách rõ khỏi điều khiển.",
+      "risk": "Các lớp/hatch không mang nghĩa cần thiết với luồng hiện tại.",
+      "verdict": "declined",
+      "materials": [
+        "thành phần web chuẩn",
+        "nhãn rõ ràng"
+      ],
+      "case": "Kém phù hợp hơn cho việc tạo video cá nhân và làm luồng chính khó nhận biết hơn.",
+      "kept": "Giữ preview tách biệt với form."
+    }
+  ],
+  "reroll": {
+    "registers": [
+      "safer",
+      "bolder"
+    ]
+  },
+  "buildPath": {
+    "value": "code",
+    "toggle": true
+  },
+  "canon": true,
+  "canonCard": {
+    "kind": "canon",
+    "label": "Giao diện quen thuộc tối giản",
+    "thesis": "Điều hướng và form theo mẫu công cụ web phổ biến.",
+    "palette": [
+      "#ffffff",
+      "#1d2633",
+      "#235cc0"
+    ],
+    "materials": [
+      "lưới gọn",
+      "thành phần chuẩn"
+    ],
+    "viewport": "Sidebar, các mục công việc rõ ràng và vùng preview riêng.",
+    "risk": "Dễ quen nhưng ít nhận diện riêng.",
+    "html": ".impeccable/mocks/decision/canon.html",
+    "comp": ".impeccable/mocks/decision/canon.png"
+  },
+  "steer": true
+}

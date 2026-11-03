@@ -11,6 +11,8 @@ if (!existsSync('.env')) throw new Error('Configure .env first. See docs/16-LOCA
 process.loadEnvFile('.env');
 for (const name of ['DATABASE_URL', 'REDIS_URL']) if (!process.env[name]) throw new Error(`Missing ${name}.`);
 if (process.env.NODE_ENV === 'production') throw new Error('This launcher is for local development only.');
+const apiPort = Number(process.env.API_PORT ?? 3001);
+if (!Number.isInteger(apiPort) || apiPort < 1 || apiPort > 65535 || [3000, 3002, 3003].includes(apiPort)) throw new Error('API_PORT must be an available port distinct from Web (3000), speech (3002) and capture (3003).');
 
 const neuralPython = process.env.TTS_VIENEU_PYTHON ?? path.join(root, '.data', 'tts-vieneu', '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
 const speechProvider = process.env.LOCAL_TTS_PROVIDER ?? (existsSync(neuralPython) ? 'vieneu' : 'local');
@@ -27,8 +29,8 @@ const environment = {
   LOCAL_ALIGNMENT_ENABLED: speechProvider === 'vieneu' ? '1' : '0',
   MEDIA_RENDER_CONCURRENCY: process.env.MEDIA_RENDER_CONCURRENCY ?? '1',
   TTS_VIENEU_VOICES_FILE: path.join(root, '.data', 'tts-vieneu', 'voices.json'),
-  APP_URL: 'http://127.0.0.1:3000', API_URL: 'http://127.0.0.1:3001',
-  API_HOST: '127.0.0.1', API_PORT: '3001', PORT: '3001',
+  APP_URL: 'http://127.0.0.1:3000', API_URL: `http://127.0.0.1:${apiPort}`,
+  API_HOST: '127.0.0.1', API_PORT: String(apiPort), PORT: String(apiPort),
   PUBLISHER_PROVIDER: 'mock', ANALYTICS_LIVE_ENABLED: 'false', NEXT_TELEMETRY_DISABLED: '1',
   TSX_TSCONFIG_PATH: path.join(root, 'tsconfig.base.json'),
 };

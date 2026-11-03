@@ -4,12 +4,12 @@ import { useEffect, useRef, useState } from 'react';
 import { z } from 'zod';
 import { sourceImageMetadataSchema } from '@shorts-factory/media/contracts';
 import { ApiError, api, errorMessage } from '../lib/api';
-import { browserCaptureMessageSchema, browserCaptureUrlSchema, decodeCapturePng, pendingBrowserCaptureSchema } from '../lib/browser-capture';
+import { browserCaptureMessageSchema, browserCaptureUrlSchema, captureResumeFromSearch, captureUrlFromSearch, decodeCapturePng, pendingBrowserCaptureSchema } from '../lib/browser-capture';
 import { useSession } from './app-shell';
 
 const queuedSchema = z.object({ id: z.string().uuid(), status: z.string() });
 const openedSchema = z.object({ opened: z.literal(true) });
-const captureSchema = queuedSchema.extend({ errorCode: z.string().nullable(), output: z.object({ postId: z.string().uuid(), warnings: z.array(z.string()), scannedComments: z.number(), capturedComments: z.number() }).nullable() });
+const captureSchema = queuedSchema.extend({ errorCode: z.string().nullable(), output: z.object({ postId: z.string().uuid(), warnings: z.array(z.string()), scannedComments: z.number(), capturedComments: z.number() }).nullable(), browserRequest: z.object({ url: browserCaptureUrlSchema }).nullable().optional() });
 const imagesSchema = z.object({ items: z.array(z.object({ id: z.string().uuid(), metadata: sourceImageMetadataSchema })) });
 
 export function BrowserCapture({ channelId, disabled, onImported }: { channelId: string; disabled: boolean; onImported: (postId: string) => void }) {
@@ -33,7 +33,12 @@ export function BrowserCapture({ channelId, disabled, onImported }: { channelId:
   const pingRef = useRef('');
   const transfers = useRef(new Set<string>());
   const requestKey = useRef({ payload: '', key: '' });
+  const resumeRequest = useRef<z.infer<typeof pendingBrowserCaptureSchema> | null>(null);
   useEffect(() => {
+    const prefilled = captureUrlFromSearch(window.location.search);
+    if (prefilled) setUrl(prefilled);
+    const resume = captureResumeFromSearch(window.location.search);
+    if (resume) { resumeRequest.current = resume; setId(resume.id); return; }
     try {
       const saved = sessionStorage.getItem(storageKey);
       if (saved && z.string().uuid().safeParse(saved).success) setId(saved);
@@ -108,13 +113,21 @@ export function BrowserCapture({ channelId, disabled, onImported }: { channelId:
         const result = await api(`/source-captures/${id}`, captureSchema, { signal: controller.signal });
         if (!active) return;
         runRef.current = result; setRun(result);
+        const resume = resumeRequest.current;
+        if (resume?.id === result.id) {
+          resumeRequest.current = null;
+          if (result.status === 'WAITING_BROWSER' && result.browserRequest?.url === resume.url) {
+            pendingRef.current = resume; setPending(resume); setUrl(resume.url); setOpened(true); setError('');
+            try { sessionStorage.setItem(storageKey, JSON.stringify(resume)); } catch { /* The server still records the job. */ }
+          } else if (result.status === 'WAITING_BROWSER') setError('Lượt chụp đã hết hạn hoặc không khớp bài đã chọn. Hủy lượt này rồi mở bài lại từ Studio.');
+        }
         if (!['WAITING_BROWSER', 'QUEUED', 'RUNNING'].includes(result.status)) {
           pendingRef.current = null; setPending(null);
           try { sessionStorage.removeItem(storageKey); } catch { /* Result is also durable on the server. */ }
         }
         if (result.status === 'SUCCEEDED' && result.output) callback.current(result.output.postId);
         else if (['WAITING_BROWSER', 'QUEUED', 'RUNNING'].includes(result.status)) timer = setTimeout(() => { void poll(); }, 2500);
-      } catch (failure) { if (active) { setError(errorMessage(failure)); if (failure instanceof ApiError && failure.status === 404) { setId(''); setRun(null); try { sessionStorage.removeItem(storageKey); } catch { /* No cached job remains in memory. */ } } } }
+      } catch (failure) { if (active) { setError(errorMessage(failure)); if (failure instanceof ApiError && failure.status === 404) { resumeRequest.current = null; pendingRef.current = null; setPending(null); setId(''); setRun(null); try { sessionStorage.removeItem(storageKey); } catch { /* No cached job remains in memory. */ } } } }
     };
     void poll();
     return () => { active = false; controller.abort(); if (timer) clearTimeout(timer); };
@@ -143,7 +156,7 @@ export function BrowserCapture({ channelId, disabled, onImported }: { channelId:
       try { sessionStorage.setItem(storageKey, current ? JSON.stringify(current) : result.id); } catch { /* The server still records the job. */ }
     } catch (failure) { setError(errorMessage(failure)); } finally { setBusy(false); }
   }
-  return <section className="panel form-panel studio-setup"><h2>1. Chụp bài và bình luận gốc</h2><p>Mở bài trong tab mới của Chrome/Edge bạn đang dùng, giữ nguyên phiên Facebook/Threads đã đăng nhập. Extension chụp tab đó rồi gửi ảnh về Studio.</p>
+  return <section className="panel form-panel studio-setup source-capture-panel" data-capture-job={pending?.id} data-capture-request={pending?.requestId} data-capture-status={run?.status}><h2>1. Chụp bài và bình luận gốc</h2><p>Mở bài trong Chrome/Edge đang dùng, mở đủ nội dung và bình luận rồi bấm extension để gửi ảnh về Studio.</p>
     <label>Link để chụp ảnh gốc<input type="url" value={url} onChange={event => { setUrl(event.target.value); setOpened(false); setDedicatedOpened(false); }} placeholder="https://www.facebook.com/share/p/.../" disabled={running || busy} /></label>
     <div className="phase5-actions"><button className="button" disabled={disabled || busy || running || !url || !channelId} onClick={openCurrent}>Mở bài trong trình duyệt hiện tại</button></div>
     {opened && <p role="status">Bài được mở ở tab mới trong chính trình duyệt này. Mở đủ nội dung và bình luận cần lấy, rồi bấm extension Shorts Factory trên tab bài viết để chụp. Nếu chưa cài extension, tab chỉ dùng để xem bài.</p>}
@@ -172,5 +185,5 @@ export function SourceImagePreview({ postId, anonymized }: { postId: string; ano
   const selected = images.filter(image => image.metadata.variant === variant);
   const refs = new Set(images.map(image => image.metadata.sourceRef));
   const missing = [...refs].filter(ref => !selected.some(image => image.metadata.sourceRef === ref));
-  return <div><h3>Ảnh giao diện gốc · {anonymized ? 'Đã che tên/avatar' : 'Nguyên bản'}</h3><p className="field-help">Giữ nguyên nội dung và số react trên ảnh. Bản che tên/avatar không che tên xuất hiện trong nội dung bài/bình luận; hãy kiểm tra từng ảnh.</p>{missing.length > 0 && <p role="alert" className="notice warning">Thiếu {missing.length} ảnh ở chế độ này. Video sẽ bị chặn nếu chọn nguồn thiếu ảnh.</p>}<div className="source-image-grid">{selected.map(image => <a key={image.id} href={`/api/v1/media/${image.id}`} target="_blank" rel="noreferrer"><img src={`/api/v1/media/${image.id}`} alt={image.metadata.sourceRef.startsWith('post:') ? 'Ảnh chụp bài gốc' : 'Ảnh chụp bình luận gốc'} loading="lazy" /></a>)}</div></div>;
+  return <div className="source-image-preview"><h3>Ảnh giao diện gốc · {anonymized ? 'Đã che tên/avatar' : 'Nguyên bản'}</h3><p className="field-help">Giữ nguyên nội dung và số react trên ảnh. Bản che tên/avatar không che tên xuất hiện trong nội dung bài/bình luận; hãy kiểm tra từng ảnh.</p>{missing.length > 0 && <p role="alert" className="notice warning">Thiếu {missing.length} ảnh ở chế độ này. Video sẽ bị chặn nếu chọn nguồn thiếu ảnh.</p>}<div className="source-image-grid">{selected.map(image => <a key={image.id} href={`/api/v1/media/${image.id}`} target="_blank" rel="noreferrer"><img src={`/api/v1/media/${image.id}`} alt={image.metadata.sourceRef.startsWith('post:') ? 'Ảnh chụp bài gốc' : 'Ảnh chụp bình luận gốc'} loading="lazy" /></a>)}</div></div>;
 }

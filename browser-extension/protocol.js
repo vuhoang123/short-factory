@@ -1,5 +1,6 @@
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const hosts = new Set(['facebook.com', 'www.facebook.com', 'm.facebook.com', 'mbasic.facebook.com', 'threads.com', 'www.threads.com', 'threads.net', 'www.threads.net']);
+export const captureLifetimeMs = 30 * 60 * 1000;
 
 export function sourceUrl(value) {
   if (typeof value !== 'string' || value.length > 2048) throw new Error('CAPTURE_URL_INVALID');
@@ -39,6 +40,19 @@ export function matchingSource(pending, value) {
     if (!expected.includes(':share:')) return current === expected;
     return current.startsWith('facebook:post:') && current === pending.resolvedIdentity;
   } catch { return false; }
+}
+
+export function captureAvailability(request, context) {
+  const blocked = reason => ({ ready: false, reason });
+  if (!request) return blocked('NO_REQUEST');
+  if (context.now - request.createdAt >= captureLifetimeMs) return blocked('EXPIRED');
+  if (request.cancelled) return blocked('CANCELLED');
+  if (request.completed) return blocked('COMPLETED');
+  if (!context.studioAvailable) return blocked('STUDIO_UNAVAILABLE');
+  if (context.tabId !== request.sourceTabId) return blocked('WRONG_TAB');
+  if (request.navigationMismatch) return blocked('SOURCE_CHANGED');
+  if (!matchingSource(request, context.url)) return blocked('SOURCE_UNVERIFIED');
+  return { ready: true, reason: 'READY' };
 }
 
 export function safeError(error) {

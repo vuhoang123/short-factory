@@ -7,6 +7,9 @@
     ".": "./src/index.ts",
     "./composition": "./src/composition.tsx",
     "./contracts": "./src/contracts.ts",
+    "./studio-settings": "./src/studio-settings.ts",
+    "./manifest-data": "./src/manifest-data.ts",
+    "./subtitles": "./src/subtitles.ts",
     "./comment-selection": "./src/comment-selection.ts"
   },
   "scripts": { "typecheck": "tsc --noEmit", "build": "tsc --noEmit", "test": "vitest run src" },

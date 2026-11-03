@@ -116,6 +116,7 @@ model Workspace {
   storyVersions   StoryVersion[]
   videos          Video[]
   assets          MediaAsset[]
+  studioPresets   StudioPreset[]
   rights          ContentRight[]
   publications    Publication[]
   publishAttempts PublicationAttempt[]
@@ -414,6 +415,19 @@ model StoryVersion {
 
   @@unique([workspaceId, id])
   @@unique([storyProjectId, version])
+}
+
+model StudioPreset {
+  id          String    @id @default(uuid())
+  workspaceId String
+  name        String
+  settings    Json
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, id])
+  @@unique([workspaceId, name])
 }
 
 model MediaAsset {

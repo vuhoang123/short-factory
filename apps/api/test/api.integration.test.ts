@@ -9,6 +9,7 @@ import fixture from '../../../examples/manual-import.json';
 import { MediaProductionPipeline } from '../../../workers/media/src/pipeline.js';
 import { readMediaWorkerConfig } from '../../../workers/media/src/config.js';
 import { studioItemsSchema, studioOverviewSchema } from '../../web/lib/studio.js';
+import { studioVideoSchema } from '../../web/lib/studio-response.js';
 import { MockTtsProvider } from '@shorts-factory/media';
 
 const testUrl = process.env.TEST_DATABASE_URL;
@@ -436,6 +437,11 @@ integration('Phase 2 PostgreSQL discovery and rights vertical slice', () => {
     const story = await db.storyProject.create({ data: { workspaceId: workspaceA, sourcePostId: postId, channelId: channel.id } });
     const asset = await db.mediaAsset.create({ data: { workspaceId: workspaceA, kind: 'VIDEO', storageKey: `review/${randomUUID()}.mp4`, checksum: randomUUID().replaceAll('-', ''), mimeType: 'video/mp4' } });
     const video = await db.video.create({ data: { workspaceId: workspaceA, channelId: channel.id, storyProjectId: story.id, title: 'Review fixture', status: 'READY_FOR_REVIEW', reviewStatus: 'PENDING', mediaAssetId: asset.id } });
+    const detail = await reviewer.get(`${prefix}/videos/${video.id}`);
+    expect(detail.status).toBe(200);
+    const parsed = studioVideoSchema.parse(detail.body);
+    expect(parsed.story?.channel).toEqual({ id: channel.id, name: channel.name, language: channel.language });
+    expect((await ownerB.get(`${prefix}/videos/${video.id}`)).status).toBe(404);
     const key = randomUUID();
     const approved = await post(reviewer, `/videos/${video.id}/reviews`, { decision: 'APPROVED' }, key);
     expect(approved.status).toBe(201);
@@ -451,6 +457,8 @@ integration('Phase 2 PostgreSQL discovery and rights vertical slice', () => {
     const channel = await db.contentChannel.create({ data: { workspaceId: workspaceA, name: 'Guard test', topicConfig: {}, automationConfig: {} } });
     const story = await db.storyProject.create({ data: { workspaceId: workspaceA, sourcePostId: unknownPostId } });
     const video = await db.video.create({ data: { workspaceId: workspaceA, channelId: channel.id, storyProjectId: story.id, title: 'Guard fixture', status: 'APPROVED', reviewStatus: 'APPROVED' } });
+    const detail = studioVideoSchema.parse((await ownerA.get(`${prefix}/videos/${video.id}`)).body);
+    expect(detail.story?.channel).toBeNull();
     const account = await db.socialAccount.create({ data: { workspaceId: workspaceA, platform: 'YOUTUBE', externalId: `${namespace}-mock-account`, displayName: 'Not a connected production account' } });
     const request = { videoId: video.id, targets: [{ socialAccountId: account.id, scheduledAt: '2030-01-01T00:00:00Z', privacy: 'private' }] };
     const blocked = await post(editor, '/publications', request);

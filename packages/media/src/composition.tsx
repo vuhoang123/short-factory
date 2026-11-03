@@ -1,8 +1,9 @@
-import { AbsoluteFill, Audio, Img, Sequence, interpolate, spring, useCurrentFrame, useVideoConfig } from 'remotion';
+import { AbsoluteFill, Audio, Img, Loop, OffthreadVideo, Sequence, interpolate, spring, useCurrentFrame, useVideoConfig } from 'remotion';
 import type { CompositionInput } from './contracts';
 import { FacebookCommentCard, FacebookPostCard, ManualCommentCard, ManualPostCard, RedditCommentCard, RedditPostCard, ThreadsCommentCard, ThreadsPostCard, type CardTheme } from './cards';
 import { subtitlePresets } from './subtitles';
 import { sourceImagePan, sourceImageShots } from './source-images';
+import { musicVolumeAtFrame } from './studio-settings';
 
 function OriginalImage({ input, image, duration }: { input: CompositionInput; image: NonNullable<CompositionInput['manifest']['sourceImages']>[number]; duration: number }) {
   const frame = useCurrentFrame();
@@ -25,9 +26,10 @@ function selectCommentCard(platform: CompositionInput['manifest']['platform']) {
   return ManualCommentCard;
 }
 
-function Background({ src }: { src: string | null }) {
+function Background({ src, video }: { src: string | null; video: CompositionInput['manifest']['backgroundVideo'] }) {
+  const style = { width: '100%', height: '100%', objectFit: 'cover' as const, filter: 'brightness(0.55) saturate(0.82)' };
   return <AbsoluteFill style={{ background: 'linear-gradient(140deg,#1c3329 0%,#182429 48%,#31453b 100%)' }}>
-    {src && <Img src={src} style={{ width: '100%', height: '100%', objectFit: 'cover', filter: 'brightness(0.42) saturate(0.82)' }} />}
+    {src && (video ? <Loop durationInFrames={video.durationFrames - video.startFrame}><OffthreadVideo src={src} muted startFrom={video.startFrame} endAt={video.durationFrames} style={style} /></Loop> : <Img src={src} style={style} />)}
     <AbsoluteFill style={{ background: 'linear-gradient(180deg,rgba(2,12,9,0.24),rgba(2,12,9,0.56))' }} />
   </AbsoluteFill>;
 }
@@ -78,15 +80,17 @@ function SubtitleOverlay({ input }: { input: CompositionInput }) {
   const preset = subtitlePresets[input.manifest.subtitlePreset];
   const theme = input.manifest.visualSettings.theme;
   const background = theme === 'dark' ? preset.background : 'rgba(10, 16, 21, 0.82)';
-  return <div style={{ position: 'absolute', left: 70, right: 70, bottom: 205, display: 'flex', justifyContent: 'center', padding: '18px 26px', borderRadius: 18, background, color: preset.color, fontSize: preset.fontSize, lineHeight: 1.18, fontWeight: 850, textAlign: 'center', textShadow: '0 3px 6px rgba(0,0,0,0.6)', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
-    {cue.words ? <span>{cue.words.map((word, index) => <span key={`${cue.id}-${index}`} style={{ color: nowMs >= word.startMs && nowMs < word.endMs ? preset.highlightColor : preset.color, marginInlineEnd: 11 }}>{word.text}</span>)}</span> : cue.text}
+  const settings = input.manifest.mediaSettings;
+  const color = settings?.captionColor ?? preset.color;
+  return <div style={{ position: 'absolute', left: 70, right: 70, bottom: settings?.captionPosition === 'CENTER' ? 840 : 205, display: 'flex', justifyContent: 'center', padding: '18px 26px', borderRadius: 18, background, color, fontSize: settings?.captionSize ?? preset.fontSize, lineHeight: 1.18, fontWeight: 850, textAlign: 'center', textShadow: '0 3px 6px rgba(0,0,0,0.6)', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
+    {cue.words ? <span>{cue.words.map((word, index) => <span key={`${cue.id}-${index}`} style={{ color: nowMs >= word.startMs && nowMs < word.endMs ? preset.highlightColor : color, marginInlineEnd: 11 }}>{word.text}</span>)}</span> : cue.text}
   </div>;
 }
 
 export function StoryComposition(input: CompositionInput) {
   const duration = input.manifest.durationFrames;
   return <AbsoluteFill style={{ overflow: 'hidden', fontFamily: 'Arial, "Noto Sans", sans-serif' }}>
-    <Background src={input.backgroundSrc} />
+    <Background src={input.backgroundSrc} video={input.manifest.backgroundVideo} />
     {input.manifest.sourceImages ? sourceImageShots(input.manifest).map((shot) => <Sequence key={`${shot.image.assetId}-${shot.startFrame}`} from={shot.startFrame} durationInFrames={shot.endFrame - shot.startFrame}><OriginalImage input={input} image={shot.image} duration={shot.endFrame - shot.startFrame} /></Sequence>) : input.manifest.visualSegments.map((segment) => <Sequence key={segment.id} from={segment.startFrame} durationInFrames={Math.max(1, segment.endFrame - segment.startFrame)}>
       <AbsoluteFill style={{ alignItems: 'center', justifyContent: segment.type === 'HOOK' ? 'center' : 'center', padding: '120px 82px 390px', boxSizing: 'border-box' }}>
         <SegmentCard input={input} segmentId={segment.id} templateId={input.manifest.templateId} />
@@ -97,6 +101,8 @@ export function StoryComposition(input: CompositionInput) {
       return src ? <Sequence key={asset.segmentId} from={asset.startFrame} durationInFrames={Math.min(asset.durationFrames, duration - asset.startFrame)}><Audio src={src} volume={input.manifest.audioLevels.narration} /></Sequence> : null;
     })}
     <SubtitleOverlay input={input} />
+    {input.manifest.sourceImages && input.manifest.attribution.required && <div style={{ position: 'absolute', left: 80, right: 80, bottom: 65, color: '#ffffff', fontSize: 20, lineHeight: 1.25, textAlign: 'center', textShadow: '0 2px 5px #000', overflowWrap: 'anywhere' }}>{input.manifest.attribution.text}</div>}
+    {input.musicSrc && input.manifest.mediaSettings?.musicAssetId && <Audio src={input.musicSrc} loop loopVolumeCurveBehavior="extend" volume={frame => musicVolumeAtFrame(frame, duration, input.manifest.fps, input.manifest.mediaSettings!, input.manifest.audioAssets)} />}
     {input.manifest.attribution.required && input.manifest.attribution.text && <div style={{ position: 'absolute', bottom: 80, left: 60, right: 60, color: '#fff', fontSize: 18, textAlign: 'center', textShadow: '0 2px 5px #000', overflowWrap: 'anywhere' }}>{input.manifest.attribution.text}</div>}
   </AbsoluteFill>;
 }

@@ -121,6 +121,46 @@ test('local export uses explicit source and candidate reviews, survives retry/re
   expect(mutations.some((item) => item.path.startsWith('/publications'))).toBe(false);
 });
 
+test('extension recovery prefills a valid post without automatically creating capture work', async ({ page }) => {
+  const mutations = await mockExport(page);
+  const url = 'https://www.facebook.com/share/p/owned-fixture/';
+  await page.goto('/export?captureUrl=' + encodeURIComponent(url));
+  await expect(page.getByLabel('Link để chụp ảnh gốc')).toHaveValue(url);
+  await expect(page.getByRole('button', { name: 'Mở bài trong trình duyệt hiện tại', exact: true })).toBeEnabled();
+  expect(mutations).toEqual([]);
+  await page.goto('/export?captureUrl=' + encodeURIComponent('javascript:alert(1)'));
+  await expect(page.getByLabel('Link để chụp ảnh gốc')).toHaveValue('');
+  expect(mutations).toEqual([]);
+});
+
+for (const recovery of ['allowed', 'mismatched-source', 'foreign-workspace'] as const) test(`extension recovery validates the durable job before reconnecting: ${recovery}`, async ({ page }) => {
+  const mutations = await mockExport(page);
+  const id = '11111111-2222-4222-8222-111111111111', requestId = '11111111-2222-4222-8222-222222222222';
+  const url = 'https://www.facebook.com/share/p/owned-fixture/';
+  await page.route(`**/api/v1/source-captures/${id}`, route => route.fulfill(recovery === 'foreign-workspace'
+    ? { status: 404, json: { code: 'NOT_FOUND', message: 'Không tìm thấy lượt chụp.' } }
+    : { json: { id, status: 'WAITING_BROWSER', errorCode: null, output: null, browserRequest: { url: recovery === 'allowed' ? url : 'https://www.facebook.com/other/posts/wrong' } } }));
+  await page.addInitScript(() => {
+    window.addEventListener('message', event => {
+      if (event.source !== window || event.origin !== location.origin || event.data?.source !== 'shorts-factory') return;
+      if (event.data.type === 'PING') window.postMessage({ source: 'shorts-factory-extension', type: 'PONG', requestId: event.data.requestId }, location.origin);
+      if (event.data.type === 'PREPARE_CAPTURE') sessionStorage.setItem('fixture-resumed-request', JSON.stringify(event.data));
+    });
+  });
+  await page.goto('/export?' + new URLSearchParams({ captureJob: id, captureRequest: requestId, captureUrl: url }));
+  if (recovery === 'allowed') {
+    await expect.poll(() => page.evaluate(() => sessionStorage.getItem('fixture-resumed-request'))).not.toBeNull();
+    const request = await page.evaluate(() => JSON.parse(sessionStorage.getItem('fixture-resumed-request')!));
+    expect(request).toMatchObject({ jobId: id, requestId, url });
+    await expect(page.locator(`[data-capture-job="${id}"]`)).toHaveAttribute('data-capture-request', requestId);
+  } else {
+    await expect(page.getByRole('alert').filter({ hasText: recovery === 'foreign-workspace' ? 'Không tìm thấy lượt chụp.' : 'không khớp bài' })).toBeVisible();
+    expect(await page.evaluate(() => sessionStorage.getItem('fixture-resumed-request'))).toBeNull();
+    await expect(page.locator('[data-capture-job]')).toHaveCount(0);
+  }
+  expect(mutations).toEqual([]);
+});
+
 test('current-browser capture resumes after reload, receives extension screenshots and requires a rights declaration', async ({ page }) => {
   const mutations = await mockExport(page, { capture: true });
   await page.addInitScript(() => {

@@ -133,7 +133,19 @@ process.on('message', (raw: unknown) => {
         await writeFile(path.join(bundleDirectory, filename), bytes, { mode: 0o600 });
         sourceImageSources[assetId] = `${serveUrl.origin}/${filename}`;
       }
-      const renderInput = { ...inputProps, audioSources, ...(inputProps.sourceImageSources ? { sourceImageSources } : {}) };
+      // OffthreadVideo puts its source URL in a proxy request; keep media URLs short.
+      const localMedia: { backgroundSrc: string | null; musicSrc?: string | null } = { backgroundSrc: inputProps.backgroundSrc, ...(inputProps.musicSrc ? { musicSrc: inputProps.musicSrc } : {}) };
+      for (const field of ['backgroundSrc', 'musicSrc'] as const) {
+        const source = localMedia[field];
+        const match = source?.match(/^data:(video\/mp4|audio\/wav);base64,(.+)$/s);
+        if (!match) continue;
+        cancelled();
+        const bytes = Buffer.from(match[2]!, 'base64');
+        const filename = `media-${createHash('sha256').update(bytes).digest('hex')}.${match[1] === 'video/mp4' ? 'mp4' : 'wav'}`;
+        await writeFile(path.join(bundleDirectory, filename), bytes, { mode: 0o600 });
+        localMedia[field] = `${serveUrl.origin}/${filename}`;
+      }
+      const renderInput = { ...inputProps, ...localMedia, audioSources, ...(inputProps.sourceImageSources ? { sourceImageSources } : {}) };
       cancelled();
       const browserExecutable = process.env.REMOTION_BROWSER_EXECUTABLE || undefined;
       const ownedBrowser = await retainResource(openBrowser('chrome', { browserExecutable, logLevel: 'error' }), (resource) => { browser = resource; });

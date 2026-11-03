@@ -4,16 +4,21 @@ const source = document.querySelector('#source');
 const confirm = document.querySelector('#confirm');
 const capture = document.querySelector('#capture');
 const cancel = document.querySelector('#cancel');
+const recover = document.querySelector('#recover');
 let ready = false, busy = false;
+let recovery;
 async function refresh() {
   try {
     const result = await chrome.runtime.sendMessage({ type: 'CAPTURE_STATUS' });
     if (!result?.ok) throw new Error(result?.error ?? 'Chưa kết nối Studio.');
     ready = result.ready; busy = result.busy;
+    recovery = result;
     source.textContent = result.url ?? '';
     status.textContent = result.status;
     capture.disabled = !ready || busy || !confirm.checked;
     cancel.hidden = !busy;
+    recover.hidden = !result.recovery;
+    recover.textContent = result.recovery === 'OPEN_SOURCE' ? 'Mở lại đúng bài chờ chụp' : result.reason === 'COMPLETED' ? 'Về Studio' : 'Mở Studio để kết nối';
   } catch { status.textContent = 'Không kết nối được extension. Mở lại popup rồi thử lại.'; capture.disabled = true; }
 }
 confirm.addEventListener('change', () => { capture.disabled = !ready || busy || !confirm.checked; });
@@ -24,6 +29,16 @@ capture.addEventListener('click', async () => {
   else await refresh();
 });
 cancel.addEventListener('click', async () => { await chrome.runtime.sendMessage({ type: 'CANCEL_FROM_POPUP' }); await refresh(); });
+recover.addEventListener('click', async () => {
+  if (!recovery?.recovery || busy) return;
+  recover.disabled = true;
+  try {
+    const result = await chrome.runtime.sendMessage({ type: recovery.recovery, requestId: recovery.requestId, jobId: recovery.jobId });
+    if (!result?.ok) status.textContent = 'Chưa mở lại được. Tải lại Studio rồi thử mở bài từ đó.';
+    else window.close();
+  } catch { status.textContent = 'Không kết nối được extension. Tải lại extension và Studio.'; }
+  finally { recover.disabled = false; }
+});
 const timer = setInterval(() => { void refresh(); }, 1000);
 window.addEventListener('pagehide', () => clearInterval(timer));
 void refresh();

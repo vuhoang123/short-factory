@@ -124,7 +124,15 @@ class ProductionController {
   @Post('voice-profiles') uploadVoice(@Req() request: Request, @Body() body: unknown) { return this.production.uploadVoice(request, body); }
   @Get('video-templates') templates(@Req() request: Request) { return this.production.templates(request); }
   @Get('backgrounds') backgrounds(@Req() request: Request) { return this.production.backgrounds(request); }
+  @Get('studio-assets') curatedMedia(@Req() request: Request) { return this.production.curatedMedia(request); }
+  @Post('studio-assets') installCuratedMedia(@Req() request: Request) { return this.production.installCuratedMedia(request, request.body); }
+  @Get('studio-assets/:key/preview') previewCuratedMedia(@Req() request: Request, @Param('key') key: string, @Res() response: Response) { return this.production.previewCuratedMedia(request, key, response, false); }
+  @Get('studio-assets/:key/thumbnail') thumbnailCuratedMedia(@Req() request: Request, @Param('key') key: string, @Res() response: Response) { return this.production.previewCuratedMedia(request, key, response, true); }
   @Post('backgrounds') uploadBackground(@Req() request: Request) { return this.production.uploadBackground(request, request.body); }
+  @Get('music') music(@Req() request: Request) { return this.production.music(request); }
+  @Post('music') uploadMusic(@Req() request: Request) { return this.production.uploadMusic(request, request.body); }
+  @Get('studio-presets') studioPresets(@Req() request: Request) { return this.production.presets(request); }
+  @Post('studio-presets') saveStudioPreset(@Req() request: Request, @Body() body: unknown) { return this.production.savePreset(request, body); }
   @Get('media/:id') media(@Req() request: Request, @Param('id') id: string, @Res() response: Response, @Query('download') download?: string) { z.string().uuid().parse(id); return this.production.sendAsset(request, id, response, download === '1'); }
   @Post('candidates/:id/produce') produce(@Req() request: Request, @Param('id') id: string, @Body() body: unknown) { z.string().uuid().parse(id); return this.production.createFromCandidate(request, id, body); }
   @Get('stories/:id') story(@Req() request: Request, @Param('id') id: string) { z.string().uuid().parse(id); return this.production.story(request, id); }
@@ -214,7 +222,8 @@ export async function createApp(database = new PrismaClient()) {
     if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method) && origin && origin !== new URL(config.APP_URL).origin) return next(new ApiError(403, 'CSRF_REJECTED', 'The request origin is not allowed.'));
     next();
   });
-  app.use('/api/v1/backgrounds', express.raw({ type: 'image/*', limit: config.MEDIA_MAX_UPLOAD_BYTES }));
+  app.use('/api/v1/backgrounds', express.raw({ type: ['image/*', 'video/mp4'], limit: config.MEDIA_MAX_UPLOAD_BYTES }));
+  app.use('/api/v1/music', express.raw({ type: ['audio/wav', 'audio/x-wav'], limit: config.MEDIA_MAX_UPLOAD_BYTES }));
   app.use('/api/v1/voice-profiles', express.raw({ type: ['audio/wav', 'audio/x-wav'], limit: 3000000 }));
   app.use('/api/v1/source-captures/:id/images/:imageId', express.raw({ type: 'image/png', limit: config.MEDIA_MAX_UPLOAD_BYTES }));
   app.use(express.json({ limit: config.IMPORT_MAX_BYTES, strict: true }));

@@ -32,6 +32,7 @@
     "local:export": "node scripts/local-export.mjs",
     "local:tts:setup": "node scripts/setup-local-tts.mjs",
     "local:capture:setup": "node scripts/setup-local-capture.mjs",
+    "local:media:setup": "node --import tsx packages/media/scripts/setup-studio-media.ts",
     "local:down": "docker compose --env-file .env -f infrastructure/compose.yaml down",
     "check": "pnpm db:validate && pnpm lint && pnpm typecheck && pnpm test"
   },

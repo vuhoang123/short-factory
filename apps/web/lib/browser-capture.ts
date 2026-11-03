@@ -2,7 +2,9 @@ import { z } from 'zod';
 
 const sourceHosts = new Set(['facebook.com', 'www.facebook.com', 'm.facebook.com', 'mbasic.facebook.com', 'threads.com', 'www.threads.com', 'threads.net', 'www.threads.net']);
 export const browserCaptureUrlSchema = z.string().trim().url().max(2048).superRefine((value, context) => {
-  const url = new URL(value);
+  let url: URL;
+  try { url = new URL(value); }
+  catch { context.addIssue({ code: 'custom', message: 'Cần link bài Facebook hoặc Threads hợp lệ.' }); return; }
   const facebook = url.hostname.endsWith('facebook.com');
   if (url.protocol !== 'https:' || url.username || url.password || !sourceHosts.has(url.hostname) || (url.port && url.port !== '443') ||
     !(facebook ? /\/(posts|permalink|share\/p)\/[^/]+/.test(url.pathname) || /\/(story|permalink)\.php$/.test(url.pathname) && Boolean(url.searchParams.get('story_fbid') && url.searchParams.get('id')) : /^\/@[^/]+\/post\/[\w-]+/.test(url.pathname))) {
@@ -11,6 +13,16 @@ export const browserCaptureUrlSchema = z.string().trim().url().max(2048).superRe
 }).transform(value => { const url = new URL(value); url.hash = ''; if (!url.pathname.endsWith('.php')) url.search = ''; return url.toString(); });
 
 export const pendingBrowserCaptureSchema = z.object({ id: z.string().uuid(), requestId: z.string().uuid(), url: browserCaptureUrlSchema, browser: z.literal('CURRENT') }).strict();
+
+export function captureUrlFromSearch(search: string): string | null {
+  const result = browserCaptureUrlSchema.safeParse(new URLSearchParams(search).get('captureUrl'));
+  return result.success ? result.data : null;
+}
+export function captureResumeFromSearch(search: string): z.infer<typeof pendingBrowserCaptureSchema> | null {
+  const params = new URLSearchParams(search);
+  const result = pendingBrowserCaptureSchema.safeParse({ id: params.get('captureJob'), requestId: params.get('captureRequest'), url: params.get('captureUrl'), browser: 'CURRENT' });
+  return result.success ? result.data : null;
+}
 const imageId = z.string().regex(/^[a-f0-9]{32}$/);
 const images = { source_image_id: imageId.nullable().optional(), anonymous_image_id: imageId.nullable().optional() };
 const capturedPostSchema = z.object({
