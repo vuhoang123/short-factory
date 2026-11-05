@@ -1,6 +1,6 @@
 # Bàn giao redesign Shorts Factory — 03/11/2026
 
-**Trạng thái: TẠM DỪNG theo yêu cầu người dùng.** Không tiếp tục triển khai cho đến khi người dùng yêu cầu tiếp tục. Đây là ghi chú cho chat kế tiếp, không phải báo cáo hoàn thành redesign.
+**Cập nhật 04/11/2026: người dùng yêu cầu tiếp tục trong cùng chat.** Đã khôi phục decision board sau khi daemon cũ dừng: **http://127.0.0.1:51043/**, vẫn key `89d45c30` và payload đã lưu. Chưa nhận lựa chọn hướng tại thời điểm cập nhật. `git status --short` sạch khi tiếp tục; ghi chú 78 dirty entries bên dưới là trạng thái lịch sử ngày 03/11, không còn là baseline hiện tại. Đây là ghi chú bàn giao, không phải báo cáo hoàn thành redesign.
 
 ## Yêu cầu và quyết định đã xác nhận
 
@@ -71,10 +71,10 @@ Người dùng tạm dừng chủ động; không để polling hoặc công vi�
 4. Đọc/ghi/read-back surface brief qua `impeccable surface-brief` với target chính `components/story-studio.tsx` và các target liên quan. Ghi đầy đủ Direction contract, THESIS, OWN-WORLD, STORY, FIRST VIEWPORT, FORM, FINISH và seed reference theo new-work. Contract chỉ ở tài liệu phát triển, không đưa vào JSX/UI/bundle.
 5. Đọc lại craft floor ngay trước sửa UI. Triển khai xuyên suốt các route, giữ product truth và hành vi hiện có. Không dừng ở đổi màu hoặc thêm margin; giảm các card lồng nhau, đầu trang dư thừa và các CTA cạnh tranh; preview và đường đi đến duyệt/tải phải dễ thấy.
 6. Kiểm tra hành vi và layout ở desktop/mobile/tablet; cập nhật selector kiểm thử nếu nhãn thay đổi, không xóa test bảo vệ chức năng. Gom các ảnh/thử nghiệm thành các vòng theo skill, mở từng ảnh xác minh evidence hợp lệ.
-7. Không có design hook: chạy detector **một lần ở cuối** cho changed targets. Lượt redesign này chưa chạy detector.
-8. Spawn **fresh finish reviewer** theo skill, không fork lịch sử; đưa đầy đủ request, product facts, contract, sketch/QUALITY BAR, screenshots, detector findings và craft-floor path. Xử lý đúng disposition, không tự chứng nhận chất lượng.
-9. Sau verdict phù hợp, dùng documenter theo skill để tạo **`apps/web/DESIGN.md` + `apps/web/.impeccable/design.json`** chứa token. Hiện chưa có DESIGN.md; nếu lúc tiếp tục đã xuất hiện thì tuân thủ lựa chọn refresh/overwrite/merge của skill trước khi ghi đè.
-10. Ghi báo cáo thay đổi, kiểm thử, giới hạn; trả kết quả có ảnh và verdict đúng phạm vi. Không mô tả toàn bộ redesign hoàn thành trước các bước trên.
+7. Đã chạy detector **một lần** trên changed targets; kết quả `[]`. Sau đó finish reviewer yêu cầu một patch CSS responsive nhỏ; patch này được xác minh bằng suite UI, detector không chạy lại để giữ đúng một lượt detector trong session.
+8. Đã hoàn tất fresh finish review theo skill. Verdict cuối: **SHIP**, high confidence; blocker mobile nav đã được sửa và kiểm thử lại.
+9. Đã tạo **`apps/web/DESIGN.md` + `apps/web/.impeccable/design.json`** với token Easy Studio thực tế.
+10. Báo cáo hoàn tất nằm ở `docs/product/IMPECCABLE_REDESIGN_REPORT.md`; full UI 51/51, unit 26/26, typecheck/lint pass.
 
 ## Phạm vi code và các điểm cần giữ
 

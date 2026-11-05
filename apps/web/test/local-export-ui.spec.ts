@@ -126,7 +126,7 @@ test('extension recovery prefills a valid post without automatically creating ca
   const url = 'https://www.facebook.com/share/p/owned-fixture/';
   await page.goto('/export?captureUrl=' + encodeURIComponent(url));
   await expect(page.getByLabel('Link để chụp ảnh gốc')).toHaveValue(url);
-  await expect(page.getByRole('button', { name: 'Mở bài trong trình duyệt hiện tại', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Mở bài để chụp', exact: true })).toBeEnabled();
   expect(mutations).toEqual([]);
   await page.goto('/export?captureUrl=' + encodeURIComponent('javascript:alert(1)'));
   await expect(page.getByLabel('Link để chụp ảnh gốc')).toHaveValue('');
@@ -176,7 +176,7 @@ test('current-browser capture resumes after reload, receives extension screensho
   await page.goto('/export');
   await expect(page.getByText('Đã kết nối extension Shorts Factory.', { exact: true })).toBeVisible();
   await page.getByLabel('Link để chụp ảnh gốc').fill('https://www.facebook.com/share/p/owned-fixture/');
-  await page.getByRole('button', { name: 'Mở bài trong trình duyệt hiện tại', exact: true }).click();
+  await page.getByRole('button', { name: 'Mở bài để chụp', exact: true }).click();
   await expect(page.getByText('Sẵn sàng nhận ảnh.', { exact: false })).toBeVisible();
   await expect.poll(() => page.evaluate(() => sessionStorage.getItem('fixture-extension-request'))).not.toBeNull();
   await page.reload();
@@ -234,7 +234,7 @@ test('opening without an extension uses the existing browser and does not launch
   await page.goto('/export');
   await page.getByLabel('Link để chụp ảnh gốc').fill('https://www.facebook.com/share/p/owned-fixture/');
   const popupPromise = page.waitForEvent('popup');
-  await page.getByRole('button', { name: 'Mở bài trong trình duyệt hiện tại', exact: true }).click();
+  await page.getByRole('button', { name: 'Mở bài để chụp', exact: true }).click();
   const popup = await popupPromise;
   await expect(popup).toHaveURL('https://www.facebook.com/share/p/owned-fixture/');
   await expect(page.getByText('Chưa kết nối extension Shorts Factory.', { exact: false })).toBeVisible();
@@ -255,7 +255,7 @@ for (const cancelFrom of ['Studio', 'extension'] as const) test(`cancelling a cu
   await page.goto('/export');
   await expect(page.getByText('Đã kết nối extension Shorts Factory.', { exact: true })).toBeVisible();
   await page.getByLabel('Link để chụp ảnh gốc').fill('https://www.facebook.com/share/p/owned-fixture/');
-  await page.getByRole('button', { name: 'Mở bài trong trình duyệt hiện tại', exact: true }).click();
+  await page.getByRole('button', { name: 'Mở bài để chụp', exact: true }).click();
   await expect(page.getByText('Sẵn sàng nhận ảnh.', { exact: false })).toBeVisible();
   if (cancelFrom === 'Studio') await page.getByRole('button', { name: 'Hủy chụp', exact: true }).click();
   else await page.evaluate(() => {
@@ -263,7 +263,7 @@ for (const cancelFrom of ['Studio', 'extension'] as const) test(`cancelling a cu
     window.postMessage({ source: 'shorts-factory-extension', type: 'CAPTURE_CANCELLED', requestId: pending.requestId, jobId: pending.id }, location.origin);
   });
   await expect(page.getByRole('button', { name: 'Hủy chụp', exact: true })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Mở bài trong trình duyệt hiện tại', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Mở bài để chụp', exact: true })).toBeEnabled();
   await expect.poll(() => page.evaluate(() => sessionStorage.getItem('sf:capture:11111111-1111-4111-8111-111111111111:owner-1'))).toBeNull();
   expect(mutations.filter(item => item.path.endsWith('/cancel'))).toHaveLength(1);
   if (cancelFrom === 'Studio') await expect.poll(() => page.evaluate(() => sessionStorage.getItem('fixture-capture-cancelled'))).toBe('11111111-2222-4222-8222-111111111111');

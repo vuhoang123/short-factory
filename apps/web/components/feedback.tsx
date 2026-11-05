@@ -1,7 +1,7 @@
 'use client';
 
 export function ErrorNotice({ message, retry }: { message: string; retry?: () => void }) {
-  return <div className="notice error" role="alert"><span>{message}</span>{retry && <button className="button small secondary" onClick={retry}>Try again</button>}</div>;
+  return <div className="notice error" role="alert"><span>{message}</span>{retry && <button className="button small secondary" onClick={retry}>Thử lại</button>}</div>;
 }
 
 export function StatusBadge({ value }: { value: string }) {
@@ -10,5 +10,5 @@ export function StatusBadge({ value }: { value: string }) {
 }
 
 export function EmptyState({ title, children }: { title: string; children: React.ReactNode }) {
-  return <div className="empty-state"><span className="empty-mark" aria-hidden="true">＋</span><h3>{title}</h3><p>{children}</p></div>;
+  return <div className="empty-state"><h3>{title}</h3><p>{children}</p></div>;
 }

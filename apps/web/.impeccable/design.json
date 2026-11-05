@@ -1,0 +1,238 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-04T00:00:00+07:00",
+  "title": "Design System: Shorts Factory",
+  "extensions": {
+    "colorMeta": {
+      "warm-ground": {
+        "role": "neutral",
+        "displayName": "Warm Paper Ground",
+        "canonical": "#f6f0eb",
+        "tonalRamp": ["oklch(18% 0.03 55)", "oklch(28% 0.035 55)", "oklch(40% 0.04 55)", "oklch(54% 0.04 55)", "oklch(68% 0.035 55)", "oklch(80% 0.025 55)", "oklch(90% 0.018 55)", "oklch(96% 0.012 55)"]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "White Working Surface",
+        "canonical": "#ffffff",
+        "tonalRamp": ["oklch(18% 0.005 50)", "oklch(30% 0.005 50)", "oklch(42% 0.004 50)", "oklch(55% 0.003 50)", "oklch(68% 0.002 50)", "oklch(80% 0.002 50)", "oklch(92% 0.001 50)", "oklch(100% 0 0)"]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Brown Ink",
+        "canonical": "#493b36",
+        "tonalRamp": ["oklch(18% 0.025 45)", "oklch(28% 0.035 45)", "oklch(40% 0.04 45)", "oklch(52% 0.035 45)", "oklch(64% 0.028 45)", "oklch(76% 0.02 45)", "oklch(88% 0.012 45)", "oklch(96% 0.006 45)"]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Soft Brown Muted",
+        "canonical": "#76655b",
+        "tonalRamp": ["oklch(20% 0.025 45)", "oklch(31% 0.03 45)", "oklch(43% 0.032 45)", "oklch(55% 0.028 45)", "oklch(66% 0.023 45)", "oklch(77% 0.017 45)", "oklch(88% 0.01 45)", "oklch(96% 0.005 45)"]
+      },
+      "action": {
+        "role": "primary",
+        "displayName": "Burnt Terracotta Action",
+        "canonical": "#ae4228",
+        "tonalRamp": ["oklch(18% 0.06 35)", "oklch(28% 0.1 35)", "oklch(40% 0.14 35)", "oklch(52% 0.16 35)", "oklch(64% 0.15 35)", "oklch(75% 0.12 35)", "oklch(86% 0.07 35)", "oklch(95% 0.025 35)"]
+      },
+      "action-hover": {
+        "role": "primary",
+        "displayName": "Deep Terracotta Hover",
+        "canonical": "#91361f",
+        "tonalRamp": ["oklch(16% 0.055 35)", "oklch(25% 0.09 35)", "oklch(36% 0.12 35)", "oklch(48% 0.14 35)", "oklch(60% 0.13 35)", "oklch(72% 0.1 35)", "oklch(84% 0.06 35)", "oklch(95% 0.02 35)"]
+      },
+      "border": {
+        "role": "neutral",
+        "displayName": "Warm Border",
+        "canonical": "#d9c9bd",
+        "tonalRamp": ["oklch(22% 0.02 50)", "oklch(34% 0.025 50)", "oklch(46% 0.025 50)", "oklch(58% 0.022 50)", "oklch(69% 0.018 50)", "oklch(79% 0.014 50)", "oklch(89% 0.009 50)", "oklch(96% 0.005 50)"]
+      },
+      "action-soft": {
+        "role": "primary",
+        "displayName": "Terracotta Soft Wash",
+        "canonical": "#f6e8df",
+        "tonalRamp": ["oklch(20% 0.04 35)", "oklch(31% 0.06 35)", "oklch(43% 0.08 35)", "oklch(56% 0.09 35)", "oklch(68% 0.08 35)", "oklch(79% 0.06 35)", "oklch(89% 0.04 35)", "oklch(96% 0.02 35)"]
+      },
+      "surface-alt": {
+        "role": "neutral",
+        "displayName": "Preview Clay",
+        "canonical": "#eee5dd",
+        "tonalRamp": ["oklch(19% 0.025 50)", "oklch(30% 0.035 50)", "oklch(42% 0.04 50)", "oklch(54% 0.035 50)", "oklch(66% 0.03 50)", "oklch(78% 0.022 50)", "oklch(88% 0.015 50)", "oklch(95% 0.01 50)"]
+      },
+      "field-border": {
+        "role": "neutral",
+        "displayName": "Field Edge",
+        "canonical": "#bfaea1",
+        "tonalRamp": ["oklch(21% 0.025 50)", "oklch(33% 0.035 50)", "oklch(45% 0.04 50)", "oklch(57% 0.035 50)", "oklch(68% 0.03 50)", "oklch(78% 0.022 50)", "oklch(88% 0.015 50)", "oklch(95% 0.008 50)"]
+      },
+      "focus": {
+        "role": "primary",
+        "displayName": "Terracotta Focus",
+        "canonical": "#ae4228",
+        "tonalRamp": ["oklch(18% 0.06 35)", "oklch(28% 0.1 35)", "oklch(40% 0.14 35)", "oklch(52% 0.16 35)", "oklch(64% 0.15 35)", "oklch(75% 0.12 35)", "oklch(86% 0.07 35)", "oklch(95% 0.025 35)"]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Studio Display",
+        "purpose": "Page titles and the first orientation cue for a creation task."
+      },
+      "headline": {
+        "displayName": "Task Headline",
+        "purpose": "Major source, editing, preview, and review sections."
+      },
+      "title": {
+        "displayName": "Panel Title",
+        "purpose": "Compact headings for panels, controls, and preview state."
+      },
+      "body": {
+        "displayName": "Readable Body",
+        "purpose": "Vietnamese instructions, source text, notices, and narration."
+      },
+      "label": {
+        "displayName": "Action Label",
+        "purpose": "Buttons, form labels, navigation, and step names."
+      }
+    },
+    "shadows": [],
+    "motion": [
+      {
+        "name": "ease-standard",
+        "value": "cubic-bezier(0.4, 0, 0.2, 1)",
+        "purpose": "Short, restrained transitions for navigation and control state changes."
+      },
+      {
+        "name": "duration-short",
+        "value": "160ms",
+        "purpose": "Hover, focus, and selected-state feedback without distracting from editing."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "sm",
+        "value": "480px"
+      },
+      {
+        "name": "md",
+        "value": "800px"
+      },
+      {
+        "name": "lg",
+        "value": "1100px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The decisive action for moving the current studio task forward.",
+      "html": "<button class='ds-btn-primary'>Tạo video</button>",
+      "css": ".ds-btn-primary { min-height: 44px; padding: 0 16px; border: 1px solid var(--accent); border-radius: 12px; background: var(--accent); color: #fff; font-family: 'Be Vietnam Pro', 'Segoe UI', sans-serif; font-size: 14px; font-weight: 600; line-height: 1.5; cursor: pointer; transition: background 160ms cubic-bezier(0.4, 0, 0.2, 1), border-color 160ms cubic-bezier(0.4, 0, 0.2, 1); } .ds-btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); } .ds-btn-primary:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; } .ds-btn-primary:active { background: var(--accent-hover); }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "A quieter alternative for recovery, navigation, or a secondary choice.",
+      "html": "<button class='ds-btn-secondary'>Xem video đã tạo</button>",
+      "css": ".ds-btn-secondary { min-height: 44px; padding: 0 16px; border: 1px solid #d9c9bd; border-radius: 12px; background: #fff; color: var(--text); font-family: 'Be Vietnam Pro', 'Segoe UI', sans-serif; font-size: 14px; font-weight: 600; line-height: 1.5; cursor: pointer; transition: background 160ms cubic-bezier(0.4, 0, 0.2, 1), border-color 160ms cubic-bezier(0.4, 0, 0.2, 1); } .ds-btn-secondary:hover { background: var(--accent-soft); border-color: var(--accent); } .ds-btn-secondary:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "text-field",
+      "description": "A broad native field with a label and enough height for comfortable Vietnamese input.",
+      "html": "<label class='ds-field'><span>Link để chụp ảnh gốc</span><input type='url' placeholder='https://www.facebook.com/…' /></label>",
+      "css": ".ds-field { display: grid; gap: 8px; color: var(--text); font-family: 'Be Vietnam Pro', 'Segoe UI', sans-serif; font-size: 14px; font-weight: 600; line-height: 1.5; } .ds-field input { min-height: 44px; width: 100%; padding: 0 12px; border: 1px solid #bfaea1; border-radius: 12px; background: #fff; color: var(--text); font: 400 16px/1.65 'Be Vietnam Pro', 'Segoe UI', sans-serif; } .ds-field input:hover { border-color: #a78c79; } .ds-field input:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; border-color: var(--accent); }"
+    },
+    {
+      "name": "Primary Navigation",
+      "kind": "nav",
+      "refersTo": "navigation-link",
+      "description": "The three-item creation-first navigation in the product header.",
+      "html": "<nav class='ds-nav' aria-label='Điều hướng chính'><a class='ds-nav-link ds-nav-link-active' href='#'>Tạo video</a><a class='ds-nav-link' href='#'>Video của bạn</a><a class='ds-nav-link' href='#'>Thư viện</a></nav>",
+      "css": ".ds-nav { display: flex; gap: 8px; align-items: center; } .ds-nav-link { display: flex; align-items: center; min-height: 44px; padding: 0 16px; border-radius: 12px; color: var(--muted); font: 600 14px/1.5 'Be Vietnam Pro', 'Segoe UI', sans-serif; text-decoration: none; transition: background 160ms cubic-bezier(0.4, 0, 0.2, 1), color 160ms cubic-bezier(0.4, 0, 0.2, 1); } .ds-nav-link:hover, .ds-nav-link-active { background: var(--accent-soft); color: var(--accent-hover); } .ds-nav-link:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }"
+    },
+    {
+      "name": "Task Panel",
+      "kind": "card",
+      "refersTo": "panel",
+      "description": "A single white work surface for a focused editing or review task.",
+      "html": "<section class='ds-panel'><h3>Đang làm gần đây</h3><p>Mở lại đúng bài và lượt đã lưu.</p></section>",
+      "css": ".ds-panel { padding: 24px; border: 1px solid #d9c9bd; border-radius: 16px; background: #fff; color: var(--text); } .ds-panel h3 { margin: 0 0 8px; font: 600 17px/1.4 'Be Vietnam Pro', 'Segoe UI', sans-serif; letter-spacing: -0.025em; } .ds-panel p { margin: 0; color: var(--muted); font: 400 16px/1.65 'Be Vietnam Pro', 'Segoe UI', sans-serif; }"
+    },
+    {
+      "name": "Status Notice",
+      "kind": "custom",
+      "refersTo": "notice",
+      "description": "Low-emphasis state copy that explains progress, rights, or the next recovery action.",
+      "html": "<div class='ds-notice' role='status'><strong>Đang chuẩn bị preview.</strong><span>Thiết lập của bạn vẫn được giữ lại.</span></div>",
+      "css": ".ds-notice { display: grid; gap: 4px; padding: 12px 16px; border-radius: 12px; background: var(--accent-soft); color: var(--text); font: 400 14px/1.5 'Be Vietnam Pro', 'Segoe UI', sans-serif; } .ds-notice strong { font-weight: 600; }"
+    },
+    {
+      "name": "Studio Stepper",
+      "kind": "custom",
+      "refersTo": "navigation-link",
+      "description": "Four real creation steps with the current step made explicit and future work gated honestly.",
+      "html": "<ol class='ds-stepper' aria-label='Các bước tạo video'><li class='ds-stepper-item ds-stepper-active'><span>1</span>Nguồn bài</li><li class='ds-stepper-item'><span>2</span>Lời đọc</li><li class='ds-stepper-item'><span>3</span>Nền &amp; nhạc</li><li class='ds-stepper-item'><span>4</span>Xuất video</li></ol>",
+      "css": ".ds-stepper { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 0; padding: 0 0 24px; border-bottom: 1px solid #d9c9bd; list-style: none; color: var(--muted); font: 600 13px/1.5 'Be Vietnam Pro', 'Segoe UI', sans-serif; } .ds-stepper-item { display: flex; align-items: center; gap: 8px; min-width: 0; } .ds-stepper-item span { display: grid; place-items: center; flex: 0 0 26px; width: 26px; height: 26px; border: 1px solid #c6b5a8; border-radius: 50%; font-size: 12px; } .ds-stepper-active { color: var(--accent-hover); } .ds-stepper-active span { border-color: var(--accent); background: var(--accent); color: #fff; }"
+    },
+    {
+      "name": "Preview Stage",
+      "kind": "custom",
+      "refersTo": "preview",
+      "description": "A portrait-first feedback surface that stays beside the editor and moves above it on mobile.",
+      "html": "<aside class='ds-preview'><div class='ds-preview-heading'><strong>Video của bạn</strong><span>9:16 · MP4</span></div><div class='ds-preview-placeholder'><svg width='44' height='44' viewBox='0 0 44 44' fill='none' aria-hidden='true'><rect x='9' y='3' width='26' height='38' rx='5' stroke='currentColor' stroke-width='2'/><path d='m19 16 10 6-10 6z' fill='currentColor'/></svg><strong>Bắt đầu từ<br/>một bài viết</strong><p>Ảnh nguồn và lời đọc sẽ xuất hiện ở đây sau khi bạn nhập bài.</p></div></aside>",
+      "css": ".ds-preview { display: grid; gap: 18px; width: 350px; padding: 24px; border-radius: 16px; background: #eee5dd; color: var(--text); } .ds-preview-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; font: 600 17px/1.4 'Be Vietnam Pro', 'Segoe UI', sans-serif; } .ds-preview-heading span { color: var(--muted); font-size: 12px; font-weight: 400; } .ds-preview-placeholder { display: grid; justify-items: start; gap: 12px; width: min(230px, 100%); min-height: 330px; padding: 26px; border-radius: 14px; background: var(--text); color: #e6d6c9; } .ds-preview-placeholder strong { color: #fff; font: 600 20px/1.35 'Be Vietnam Pro', 'Segoe UI', sans-serif; } .ds-preview-placeholder p { margin: 0; color: #e6d6c9; font: 400 13px/1.55 'Be Vietnam Pro', 'Segoe UI', sans-serif; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Easy Studio",
+    "overview": "Shorts Factory should feel like a calm, friendly workbench for a Vietnamese-speaking creator working locally. The interface starts from the next useful action—bring in a permitted post, review its source images and rights, shape the narration, then render and download an MP4—without making administration compete with creation.\n\nThe visual world is warm paper around white working surfaces. Be Vietnam Pro gives Vietnamese labels and longer explanations a human, readable voice; terracotta is reserved for the action that moves the current task forward. A practical preview stays beside the editor on wide screens and moves above the work on small screens. The UI is quiet at rest, explicit about progress and recovery, and honest about review gates and local-only output.",
+    "keyCharacteristics": [
+      "Warm paper ground with white, tactile task surfaces.",
+      "One clear current task with a useful portrait preview nearby.",
+      "Friendly Vietnamese-first typography with comfortable reading rhythm.",
+      "Terracotta action color used for decisive movement, not decoration.",
+      "Flat tonal depth, gentle borders, and broad accessible controls."
+    ],
+    "rules": [
+      {
+        "name": "The Easy-Path Rule",
+        "body": "Keep one understandable next action visible for the current task, while preserving access to the source, draft, preview, and recovery state.",
+        "section": "overview"
+      },
+      {
+        "name": "The Warm-Ground Rule",
+        "body": "Let warm paper carry the page and white carry the work; do not rebuild the old green palette or make every surface a card.",
+        "section": "colors"
+      },
+      {
+        "name": "The Clear-Voice Rule",
+        "body": "Use semibold only to establish hierarchy or action; never turn helper text, progress metadata, or every navigation item into a headline.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat-Rest Rule",
+        "body": "Surfaces are calm at rest; use tonal contrast, borders, and explicit state copy before reaching for shadows or decorative chrome.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do put the next useful action first and keep it visible in the current step.",
+      "Do use Be Vietnam Pro and Vietnamese-first labels for creation, capture, review, progress, and recovery.",
+      "Do preserve the warm ground, white work surfaces, terracotta action voice, and clay preview layer.",
+      "Do keep controls at least 44px high and maintain visible keyboard focus.",
+      "Do show original/anonymized source previews, rights review, provenance, and actionable failure states before rendering.",
+      "Do keep the editor and preview synchronized as settings change, while requiring a saved script and human review before MP4 approval."
+    ],
+    "donts": [
+      "Don't revive the legacy green palette or add decorative badges, ornamental gradients, or nested card scaffolds.",
+      "Don't use shadows as the default way to separate content; use tonal surfaces, whitespace, and borders.",
+      "Don't hide source integrity, privacy, rights, or recovery details behind ambiguous status language.",
+      "Don't claim automatic social publishing; unapproved providers and permissions remain blocked and publishing requires an explicit handoff.",
+      "Don't make mobile users lose the preview, the current step, or the recovery action just to save vertical space."
+    ]
+  }
+}

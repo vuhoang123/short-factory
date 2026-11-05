@@ -23,8 +23,8 @@ test('all workspace routes settle without repeated fetching or update-depth erro
 test('refreshing topic rules preserves the mounted editor and its unsaved draft', async ({ page }) => {
   await mockWorkspace(page);
   await page.goto('/settings');
-  await page.getByRole('button', { name: 'Edit', exact: true }).click();
-  const name = page.getByLabel('Name', { exact: true });
+  await page.getByRole('button', { name: 'Chỉnh sửa', exact: true }).click();
+  const name = page.getByLabel('Tên', { exact: true });
   await name.fill('Unsaved editorial draft');
   const editor = await name.elementHandle();
   let release!: () => void;
@@ -33,7 +33,7 @@ test('refreshing topic rules preserves the mounted editor and its unsaved draft'
   const refreshing = new Promise<void>((resolve) => { started = resolve; });
   await page.route('**/api/v1/topic-rules?**', async (route) => { started(); await gate; await route.fallback(); });
   try {
-    await page.getByRole('button', { name: 'Disable', exact: true }).click();
+    await page.getByRole('button', { name: 'Tắt', exact: true }).click();
     await refreshing;
     await expect.poll(() => editor!.evaluate((element) => element.isConnected)).toBe(true);
     await expect(name).toHaveValue('Unsaved editorial draft');
@@ -46,7 +46,7 @@ test('slow background polling stays single-flight and stops when leaving the pag
   await page.clock.install();
   await mockWorkspace(page);
   await page.goto('/autopilot');
-  await expect(page.getByRole('combobox', { name: 'Content channel', exact: true })).toHaveValue(channelId);
+  await expect(page.getByRole('combobox', { name: 'Kênh nội dung', exact: true })).toHaveValue(channelId);
   await page.waitForLoadState('networkidle');
   let requests = 0;
   let aborted = false;
@@ -59,7 +59,8 @@ test('slow background polling stays single-flight and stops when leaving the pag
     await expect.poll(() => requests).toBe(1);
     await page.clock.runFor(20_000);
     expect(requests).toBe(1);
-    await page.getByRole('link', { name: '⚙ Settings', exact: true }).click();
+    await page.locator('.account-menu > summary').click();
+    await page.getByRole('link', { name: 'Cài đặt workspace', exact: true }).click();
     await expect(page).toHaveURL(/\/settings$/);
     await expect.poll(() => aborted).toBe(true);
     await page.clock.runFor(30_000);
@@ -96,7 +97,8 @@ test('Studio stops polling cancelled runs and cancels scheduled polling on navig
   await page.getByRole('button', { name: 'Tạo bản nháp kịch bản', exact: false }).click();
   await expect(page.getByText('RUNNING', { exact: true })).toBeVisible();
   const activeRequests = requests;
-  await page.getByRole('link', { name: '⚙ Settings', exact: true }).click();
+  await page.locator('.account-menu > summary').click();
+    await page.getByRole('link', { name: 'Cài đặt workspace', exact: true }).click();
   await expect(page).toHaveURL(/\/settings$/);
   await page.waitForTimeout(2000);
   expect(requests).toBe(activeRequests);
@@ -124,14 +126,14 @@ test('refreshing session in the same workspace keeps the current page mounted', 
   await mockWorkspace(page);
   await page.goto('/settings');
   await page.waitForLoadState('networkidle');
-  const heading = await page.getByRole('heading', { name: 'Workspace settings', exact: true }).elementHandle();
+  const heading = await page.getByRole('heading', { name: 'Cài đặt workspace', exact: true }).elementHandle();
   let release!: () => void;
   const gate = new Promise<void>((resolve) => { release = resolve; });
   await page.route('**/api/v1/auth/me', async (route) => { await gate; await route.fallback(); });
   try {
-    await page.getByLabel('Account email', { exact: true }).fill('fixture@example.org');
-    await page.getByRole('button', { name: 'Save access', exact: true }).click();
-    await expect(page.getByText('Opening your workspace…', { exact: true })).toHaveCount(0);
+    await page.getByLabel('Email thành viên', { exact: true }).fill('fixture@example.org');
+    await page.getByRole('button', { name: 'Lưu quyền truy cập', exact: true }).click();
+    await expect(page.getByText('Đang mở workspace của bạn…', { exact: true })).toHaveCount(0);
     expect(await heading!.evaluate((element) => element.isConnected)).toBe(true);
   } finally { release(); }
   await page.waitForLoadState('networkidle');
@@ -150,16 +152,17 @@ test('switching workspace clears the previous page before loading the new worksp
   await page.route('**/api/v1/auth/workspace', (route) => { workspaceId = route.request().postDataJSON().workspaceId; return route.fulfill({ json: {} }); });
   await page.route('**/api/v1/workspaces/workspace-2/members?**', (route) => route.fulfill({ json: { items: [] } }));
   await page.goto('/settings');
-  await page.getByRole('button', { name: 'Edit', exact: true }).click();
-  await page.getByLabel('Name', { exact: true }).fill('Private draft from first workspace');
+  await page.getByRole('button', { name: 'Chỉnh sửa', exact: true }).click();
+  await page.getByLabel('Tên', { exact: true }).fill('Private draft from first workspace');
   const heading = await page.locator('h1').elementHandle();
   try {
-    await page.getByLabel('Workspace', { exact: true }).selectOption('workspace-2');
-    await expect(page.getByText('Opening your workspace…', { exact: true })).toBeVisible();
+    await page.locator('.account-menu > summary').click();
+    await page.getByLabel('Workspace đang dùng', { exact: true }).selectOption('workspace-2');
+    await expect(page.getByText('Đang mở workspace của bạn…', { exact: true })).toBeVisible();
     expect(await heading!.evaluate((element) => element.isConnected)).toBe(false);
   } finally { release(); }
-  await expect(page.getByLabel('Workspace', { exact: true })).toHaveValue('workspace-2');
-  await expect(page.getByLabel('Name', { exact: true })).toHaveCount(0);
+  await expect(page.locator('#active-workspace')).toHaveValue('workspace-2');
+  await expect(page.getByLabel('Tên', { exact: true })).toHaveCount(0);
 });
 
 test('an expired session clears workspace content and returns to login', async ({ page }) => {
@@ -168,8 +171,8 @@ test('an expired session clears workspace content and returns to login', async (
   await page.waitForLoadState('networkidle');
   const heading = await page.locator('h1').elementHandle();
   await page.route('**/api/v1/auth/me', (route) => route.fulfill({ status: 401, json: { code: 'UNAUTHENTICATED', message: 'Session expired' } }));
-  await page.getByLabel('Account email', { exact: true }).fill('fixture@example.org');
-  await page.getByRole('button', { name: 'Save access', exact: true }).click();
+  await page.getByLabel('Email thành viên', { exact: true }).fill('fixture@example.org');
+  await page.getByRole('button', { name: 'Lưu quyền truy cập', exact: true }).click();
   await expect(page).toHaveURL(/\/login$/);
   expect(await heading!.evaluate((element) => element.isConnected)).toBe(false);
 });
@@ -193,14 +196,15 @@ test('an old session refresh cannot overwrite a workspace switch', async ({ page
   await page.goto('/settings');
   await page.waitForLoadState('networkidle');
   try {
-    await page.getByLabel('Account email', { exact: true }).fill('fixture@example.org');
-    await page.getByRole('button', { name: 'Save access', exact: true }).click();
+    await page.getByLabel('Email thành viên', { exact: true }).fill('fixture@example.org');
+    await page.getByRole('button', { name: 'Lưu quyền truy cập', exact: true }).click();
     await staleStarted;
-    await page.getByLabel('Workspace', { exact: true }).selectOption('workspace-2');
-    await expect(page.getByLabel('Workspace', { exact: true })).toHaveValue('workspace-2');
+    await page.locator('.account-menu > summary').click();
+    await page.getByLabel('Workspace đang dùng', { exact: true }).selectOption('workspace-2');
+    await expect(page.locator('#active-workspace')).toHaveValue('workspace-2');
   } finally { release(); }
   await page.waitForLoadState('networkidle');
-  await expect(page.getByLabel('Workspace', { exact: true })).toHaveValue('workspace-2');
+  await expect(page.locator('#active-workspace')).toHaveValue('workspace-2');
 });
 
 test('retrying a terminal Autopilot run immediately resumes detail polling', async ({ page }) => {
@@ -211,6 +215,6 @@ test('retrying a terminal Autopilot run immediately resumes detail polling', asy
   await page.goto('/autopilot');
   await page.getByRole('button', { name: /Community stories.*APPROVAL GATE/i }).click();
   await expect(page.getByText('failed permanent', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Retry failed step', exact: true }).click();
+  await page.getByRole('button', { name: 'Thử lại bước lỗi', exact: true }).click();
   await expect(page.getByText('running', { exact: true })).toBeVisible({ timeout: 3500 });
 });

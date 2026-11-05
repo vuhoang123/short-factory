@@ -19,7 +19,7 @@ for (const width of [320, 768, 1440]) {
       const issues = await page.evaluate(() => {
         const visible = (element: Element) => element.getClientRects().length > 0 && getComputedStyle(element).visibility !== 'hidden' && !element.closest('details:not([open]) > :not(summary)');
         const excluded = '.table-scroll, .preview-stage, .studio-remotion-preview, .sidebar nav, nextjs-portal';
-        const controls = [...document.querySelectorAll('main button, main a.button, main input:not([type="hidden"]), main select, main textarea, main summary, .secondary-navigation a, .secondary-navigation button, .secondary-navigation summary')].filter(element => visible(element) && !element.closest('.sidebar nav[aria-label="Main navigation"], .table-scroll, .preview-stage, .studio-remotion-preview, nextjs-portal'));
+        const controls = [...document.querySelectorAll('main button, main a.button, main input:not([type="hidden"]), main select, main textarea, main summary, .secondary-navigation a, .secondary-navigation button, .secondary-navigation summary')].filter(element => visible(element) && !element.closest('.sidebar nav[aria-label="Điều hướng chính"], .table-scroll, .preview-stage, .studio-remotion-preview, nextjs-portal'));
         const issues: string[] = [];
         for (const help of document.querySelectorAll('main .field-help')) {
           const previous = help.previousElementSibling;

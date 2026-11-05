@@ -61,7 +61,7 @@ export function StudioDraftPreview(props: DraftPreviewProps) {
   const problem = images.error ? 'Không tải được ảnh nguồn. Thử tải lại preview.' : !result ? 'Đang tải ảnh và nền để kiểm tra preview…' : result.error ?? '';
   useEffect(() => { props.onStatus(problem); }, [problem, props.onStatus]);
   return <section className="panel studio-live-preview" id="studio-live-preview" aria-label="Xem trước bố cục video">
-    <div className="preview-heading"><div><span className="eyebrow">XEM TRƯỚC</span><h2>Video của bạn</h2></div><span className="badge neutral">9:16 · 1080p</span></div>
+    <div className="preview-heading"><div><h2>Video của bạn</h2></div><span className="badge neutral">9:16 · 1080p</span></div>
     {images.error ? <ErrorNotice message={images.error} retry={images.reload} /> : !result ? <p role="status">Đang tải ảnh nguồn…</p> : result.error ? <ErrorNotice message={result.error} /> : result.input && <>
       <div className="preview-stage"><Player ref={player} component={StoryComposition} inputProps={result.input} durationInFrames={result.input.manifest.durationFrames} compositionWidth={1080} compositionHeight={1920} fps={30} controls initialFrame={8} style={{ width: '100%', aspectRatio: '9 / 16' }} errorFallback={() => <div className="notice error">Không đọc được ảnh hoặc video nền. Kiểm tra file và tải lại preview.</div>} /></div>
       <nav className="preview-scenes" aria-label="Xem từng cảnh">{result.input.manifest.visualSegments.map((segment, index) => <button key={segment.id} type="button" className="button secondary small" onClick={() => { player.current?.pause(); player.current?.seekTo(Math.min(segment.startFrame + 8, segment.endFrame - 1)); }}>Cảnh {index + 1}</button>)}</nav>

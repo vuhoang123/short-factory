@@ -5,10 +5,10 @@ import { mockWorkspace, channelId, now } from './fixtures/workspace';
 const id = (suffix: number) => `00000000-0000-4000-8000-${String(suffix).padStart(12, '0')}`;
 const postId = id(101); const candidateId = id(102); const storyId = id(103); const draftId = id(104); const renderId = id(105); const videoId = id(106); const assetId = id(107);
 
-async function productFixture(page: Page, options: { rendered?: boolean; role?: 'OWNER' | 'REVIEWER' | 'EDITOR'; reviewFailure?: boolean; longContent?: boolean } = {}) {
+async function productFixture(page: Page, options: { rendered?: boolean; drafted?: boolean; role?: 'OWNER' | 'REVIEWER' | 'EDITOR'; reviewFailure?: boolean; longContent?: boolean } = {}) {
   const base = await mockWorkspace(page, options.role);
   const mutations: Array<{ path: string; body: Record<string, unknown>; key: string }> = [];
-  let candidateStatus = options.rendered ? 'APPROVED' : 'PENDING_REVIEW'; let drafted = Boolean(options.rendered); let rendered = Boolean(options.rendered); let reviewStatus = 'PENDING';
+  let candidateStatus = options.rendered || options.drafted ? 'APPROVED' : 'PENDING_REVIEW'; let drafted = Boolean(options.rendered || options.drafted); let rendered = Boolean(options.rendered); let reviewStatus = 'PENDING';
   let version = 1;
   let savedSettings: Record<string, unknown> = { channelId, commentIds: [], templateId: 'SocialCommentary', subtitlePreset: 'ClassicCaption', theme: 'dark', backgroundAssetId: null, voiceProfileId: 'mock-vi', speakingRate: 1 };
   let segments = [{ id: 'hook', type: 'HOOK', text: 'Câu chuyện của khu phố', sourceRefs: [`post:${postId}`], narrationType: 'ORIGINAL_COMMENTARY', estimatedDurationMs: 2000 }, { id: 'post', type: 'POST', text: 'Mọi người cùng góp sách cho thư viện nhỏ.', sourceRefs: [`post:${postId}`], narrationType: 'VERBATIM', estimatedDurationMs: 3000 }];
@@ -39,7 +39,7 @@ async function productFixture(page: Page, options: { rendered?: boolean; role?: 
     if (path === `/posts/${postId}/comments`) { await route.fulfill({ json: { items: post.comments } }); return; }
     if (path === `/production-runs/${draftId}` || path === `/production-runs/${renderId}`) { await route.fulfill({ json: { ...currentRun(), input: savedSettings, stages: [], renderJob: { progress: 1 }, videos: rendered ? [{ id: videoId, status: 'READY_FOR_REVIEW', mediaAsset: { id: assetId } }] : [] } }); return; }
     if (path === `/stories/${storyId}`) { await route.fulfill({ json: { id: storyId, channel: { id: channelId, name: 'Community stories', language: 'vi' }, post: { ...post, authorAlias: null }, versions: [{ id: id(110 + version), version, script: { version, language: 'vi', title: post.title, targetDurationSec: Number(savedSettings.targetDurationSec ?? 25), segments }, modelVersion: 'mock-fixture', audioAssets: [], subtitleTracks: [] }] } }); return; }
-    if (path === '/video-templates') { await route.fulfill({ json: { items: [{ id: 'SocialCommentary', version: 1, name: 'Social commentary', description: 'Owned test fixture', status: 'READY' }] } }); return; }
+    if (path === '/video-templates') { await route.fulfill({ json: { items: [{ id: 'SocialCommentary', version: 1, name: 'Bình luận xã hội', description: 'Owned test fixture', status: 'READY' }] } }); return; }
     if (path === `/videos/${videoId}`) { await route.fulfill({ json: { id: videoId, title: post.title, status: reviewStatus === 'PENDING' ? 'READY_FOR_REVIEW' : reviewStatus, reviewStatus, durationMs: 5000, width: 1080, height: 1920, fps: 30, renderManifest: null, mediaAsset: { id: assetId, mimeType: 'video/mp4', checksum: '0'.repeat(64), metadata: null }, story: { id: storyId, channel: null, post: { ...post, authorAlias: null }, versions: [] } } }); return; }
     if (path === '/videos') { await route.fulfill({ json: { items: rendered ? [{ id: videoId, title: post.title, status: reviewStatus === 'PENDING' ? 'READY_FOR_REVIEW' : reviewStatus, reviewStatus, mediaAssetId: assetId, durationMs: 5000, createdAt: now }] : [] } }); return; }
     if (path.startsWith('/media/')) { await route.fulfill({ status: 200, contentType: 'video/mp4', body: '' }); return; }
@@ -66,6 +66,7 @@ test('CC0 catalog previews, filters and selects assets without producing a video
   await page.route('**/api/v1/studio-assets/*/preview', route => route.fulfill({ contentType: 'audio/wav', body: '' }));
   await page.route('**/api/v1/studio-assets/*/thumbnail', route => route.fulfill({ status: 404 }));
   await page.goto(`/studio?video=${videoId}`);
+  await page.getByRole('button', { name: '3 Nền & nhạc', exact: true }).click();
   await expect(page.locator('.studio-catalog')).toHaveJSProperty('open', true);
   await expect(page.getByRole('img', { name: 'Rừng xanh CC0', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Nhạc không lời (1)', exact: true }).click();
@@ -156,7 +157,7 @@ test('review rejection and failed approval are shown without claiming approval',
 
 test('Studio explains an empty video library and shows load failures with retry', async ({ page }) => {
   await productFixture(page);
-  await page.goto('/studio#studio-videos');
+  await page.goto('/studio?view=videos#studio-videos');
   await expect(page.getByRole('heading', { name: 'Chưa có video để duyệt', exact: true })).toBeVisible();
   await page.route('**/api/v1/videos', route => route.fulfill({ status: 503, json: { code: 'UNAVAILABLE', message: 'Không tải được video.' } }));
   await page.getByRole('button', { name: 'Làm mới video', exact: true }).click();
@@ -169,15 +170,17 @@ test('Discover → exact Studio draft → edit version → explicit MP4 → revi
   page.on('pageerror', (error) => errors.push(error.message));
   page.on('console', (message) => { if (/Maximum update depth|Too many re-renders/.test(message.text())) errors.push(message.text()); });
   await page.goto('/discover');
-  await expect(page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link')).toHaveCount(5);
+  await expect(page.getByRole('navigation', { name: 'Điều hướng chính' }).getByRole('link')).toHaveCount(3);
   await page.getByRole('button', { name: 'Xem chi tiết →', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Nội dung đang xem' });
   await dialog.getByRole('checkbox').first().check();
   await dialog.getByRole('button', { name: 'Chọn nội dung này' }).click();
   await dialog.getByRole('link', { name: 'Tiếp tục trong Studio →' }).click();
   await expect(page).toHaveURL(new RegExp(`posts=${postId}`));
-  await expect(page.getByRole('heading', { name: 'Studio', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Biên tập video', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '1 Nguồn bài', exact: true }).click();
   await page.getByRole('checkbox', { name: 'Chúng tôi đọc sách cùng nhau mỗi tuần.', exact: true }).check();
+  await page.getByRole('button', { name: '2 Lời đọc', exact: true }).click();
   await page.getByRole('combobox', { name: 'Tốc độ đọc', exact: true }).selectOption('1.15');
   await page.getByRole('button', { name: 'Tạo bản nháp kịch bản', exact: false }).click();
   await expect(page.getByRole('heading', { name: 'Biên tập kịch bản' })).toBeVisible();
@@ -204,14 +207,15 @@ test('Discover → exact Studio draft → edit version → explicit MP4 → revi
   await expect(page.getByRole('button', { name: 'Duyệt video', exact: true })).toBeDisabled();
   await page.getByRole('checkbox', { name: 'Tôi đã xem video, kiểm tra lời đọc, phụ đề và quyền sử dụng.', exact: true }).check();
   await page.getByRole('button', { name: 'Duyệt video', exact: true }).click();
-  await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Publish', exact: true }).click();
+  await page.locator('.account-menu > summary').click();
+  await page.getByRole('link', { name: 'Bàn giao video', exact: true }).click();
   await expect(page.getByText('BLOCKED_EXTERNAL', { exact: true })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Tải MP4', exact: true })).toBeVisible();
   await page.getByRole('link', { name: 'Xem trong Studio', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Xem và duyệt video', exact: true })).toBeVisible();
-  await expect(page.locator('.studio-source strong')).toHaveText('Thư viện nhỏ trong khu phố');
   await expect(page.getByRole('combobox', { name: 'Tốc độ đọc', exact: true })).toHaveValue('1.15');
-  await page.locator('.studio-comment-section > summary').click();
+  await page.getByRole('button', { name: '1 Nguồn bài', exact: true }).click();
+  await expect(page.locator('.studio-source strong')).toHaveText('Thư viện nhỏ trong khu phố');
   await expect(page.getByRole('checkbox', { name: 'Chúng tôi đọc sách cùng nhau mỗi tuần.', exact: true })).toBeChecked();
   expect(fixture.mutations.every((entry) => !entry.path.includes('/publish') && entry.key.length > 0)).toBe(true);
   expect(errors).toEqual([]);
@@ -236,7 +240,7 @@ test('bulk selection opens an editing queue without starting production, and Esc
   await page.getByRole('checkbox', { name: 'Chọn Thư viện nhỏ trong khu phố', exact: true }).check();
   await expect(page.getByRole('button', { name: 'Duyệt chọn các bài đủ điều kiện' })).toBeDisabled();
   await page.getByRole('link', { name: 'Mở 1 bài trong Studio' }).click();
-  await expect(page.getByRole('navigation', { name: 'Hàng đợi biên tập' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Biên tập video', exact: true })).toBeVisible();
   await expect(page.getByText('Bài này chưa đủ điều kiện', { exact: true })).toBeVisible();
   expect(fixture.mutations).toEqual([]);
   await page.goto('/discover');
@@ -297,14 +301,17 @@ test('original-image preview, caption settings and presets stay stable without a
   await expect(preview.locator('img')).toHaveAttribute('src', `/api/v1/media/${imageId}`);
   await expect(page.getByRole('button', { name: 'Tạo video MP4', exact: true })).toBeEnabled();
   const mutationsBefore = fixture.mutations.length; const imageReadsBefore = imageGets;
+  await page.getByRole('button', { name: '3 Nền & nhạc', exact: true }).click();
   await page.getByRole('button', { name: 'Một câu chuyện hay Tô sáng từng từ' }).click();
   await page.getByRole('combobox', { name: 'Cỡ chữ', exact: true }).selectOption('52');
+  await page.getByRole('button', { name: '2 Lời đọc', exact: true }).click();
   await page.getByRole('combobox', { name: 'Tốc độ đọc', exact: true }).selectOption('0.85');
   await page.getByRole('button', { name: 'Cảnh 2', exact: true }).click();
   await page.waitForTimeout(1900);
   expect(fixture.mutations).toHaveLength(mutationsBefore); expect(imageGets).toBe(imageReadsBefore);
-  await expect(page.getByRole('combobox', { name: 'Cỡ chữ', exact: true })).toHaveValue('52');
   await expect(page.getByRole('combobox', { name: 'Tốc độ đọc', exact: true })).toHaveValue('0.85');
+  await page.getByRole('button', { name: '3 Nền & nhạc', exact: true }).click();
+  await expect(page.getByRole('combobox', { name: 'Cỡ chữ', exact: true })).toHaveValue('52');
   await page.getByText('Bộ thiết lập của bạn', { exact: true }).click();
   await page.getByLabel('Tên bộ thiết lập', { exact: true }).fill('Giọng kể riêng');
   let savedPreset: Record<string, unknown> | null = null;
@@ -345,11 +352,11 @@ test('long source titles, the detail dialog and the populated editor fit narrow 
     expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
     await page.getByRole('button', { name: 'Đóng chi tiết', exact: true }).click();
     await page.goto(`/studio?posts=${postId}&run=${renderId}`);
-    await expect(page.getByRole('heading', { name: 'Thiết lập video', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Biên tập kịch bản', exact: true })).toBeVisible();
     await page.waitForLoadState('networkidle');
-    expect(await page.locator('.studio-edit-column').evaluate(element => element.firstElementChild?.id)).toBe('studio-script');
-    await page.getByRole('navigation', { name: 'Các phần biên tập', exact: true }).getByRole('link', { name: 'Kịch bản', exact: true }).click();
-    await expect(page).toHaveURL(/#studio-script$/);
+    await expect(page.locator('.studio-steps')).toBeVisible();
+    await page.getByRole('button', { name: '3 Nền & nhạc', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Nền, nhạc và phụ đề', exact: true })).toBeVisible();
     const overflow = await page.locator('main').evaluate(element => [...element.querySelectorAll('input:not([type="hidden"]), select, textarea, button, a.button, summary')].filter(control => control.getClientRects().length > 0 && !control.closest('details:not([open]) > :not(summary), .preview-scenes')).filter(control => {
       const rect = control.getBoundingClientRect();
       return rect.left < -1 || rect.right > document.documentElement.clientWidth + 1;
@@ -371,8 +378,11 @@ test('expanded Studio cards keep help text separated from checkbox rows and form
   for (const width of [390, 768, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(`/studio?posts=${postId}&run=${renderId}`);
-    await expect(page.getByRole('heading', { name: 'Thiết lập video', exact: true })).toBeVisible();
-    for (const name of ['Bố cục và quyền riêng tư', 'Bộ thiết lập của bạn', 'Giọng đọc riêng · VieNeu local', 'Thêm nền hoặc nhạc từ máy']) await page.getByText(name, { exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Biên tập kịch bản', exact: true })).toBeVisible();
+    await page.getByText('Giọng đọc riêng · VieNeu local', { exact: true }).click();
+    await page.locator('.voice-library').screenshot({ path: `../../test-results/ui-layout/cards/${width}-voice-library.png` });
+    await page.getByRole('button', { name: '3 Nền & nhạc', exact: true }).click();
+    for (const name of ['Bố cục và quyền riêng tư', 'Bộ thiết lập của bạn', 'Thêm nền hoặc nhạc từ máy']) await page.getByText(name, { exact: true }).click();
     const advanced = page.locator('.studio-advanced');
     await expect(advanced.getByRole('combobox', { name: 'Giao diện thẻ', exact: true })).toBeVisible();
     await advanced.getByRole('combobox', { name: 'Giao diện thẻ', exact: true }).selectOption('light');
@@ -381,7 +391,7 @@ test('expanded Studio cards keep help text separated from checkbox rows and form
     await expect(advanced).toHaveJSProperty('open', true);
     const measurements = await page.evaluate(() => {
       const gaps: Array<{ card: string; before: string; after: string; gap: number }> = [];
-      for (const selector of ['.studio-advanced', '.studio-preset-panel', '.voice-library', '.studio-upload-panel']) {
+      for (const selector of ['.studio-advanced', '.studio-preset-panel', '.studio-upload-panel']) {
         const panel = document.querySelector(selector)!;
         const blocks = [...panel.children].filter(element => element.getClientRects().length > 0 && !element.matches('[role="alert"], [role="status"]'));
         for (let index = 1; index < blocks.length; index++) {
@@ -397,7 +407,7 @@ test('expanded Studio cards keep help text separated from checkbox rows and form
     expect(measurements.helpGap).toBeGreaterThanOrEqual(12);
     await advanced.scrollIntoViewIfNeeded();
     await page.screenshot({ path: `../../test-results/ui-layout/cards/${width}-advanced.png` });
-    for (const selector of ['.studio-preset-panel', '.voice-library', '.studio-upload-panel']) await page.locator(selector).screenshot({ path: `../../test-results/ui-layout/cards/${width}-${selector.slice(1)}.png` });
+    for (const selector of ['.studio-preset-panel', '.studio-upload-panel']) await page.locator(selector).screenshot({ path: `../../test-results/ui-layout/cards/${width}-${selector.slice(1)}.png` });
   }
   expect(fixture.mutations).toEqual([]);
 });
@@ -417,6 +427,7 @@ test('preset cards explain loading and empty states before saving and applying a
   });
   try {
     await page.goto(`/studio?posts=${postId}&run=${renderId}`);
+    await page.getByRole('button', { name: '3 Nền & nhạc', exact: true }).click();
     await page.getByText('Bộ thiết lập của bạn', { exact: true }).click();
     const card = page.locator('.studio-preset-panel');
     await expect(card.getByText('Đang tải bộ thiết lập…', { exact: true })).toBeVisible({ timeout: 4000 });
@@ -448,6 +459,7 @@ test('media upload requires rights evidence and keeps server errors actionable f
     else { imported = true; await route.fulfill({ json: { id: id(491) } }); }
   });
   await page.goto(`/studio?posts=${postId}&run=${renderId}`);
+  await page.getByRole('button', { name: '3 Nền & nhạc', exact: true }).click();
   await page.getByText('Thêm nền hoặc nhạc từ máy', { exact: true }).click();
   const card = page.locator('.studio-upload-panel');
   await card.getByLabel('File từ máy', { exact: true }).setInputFiles({ name: 'local-background.png', mimeType: 'image/png', buffer: Buffer.from('fixture file rejected by mocked validation') });
@@ -481,7 +493,7 @@ test('reviewed local import continues in the shared Studio instead of a second e
   await page.evaluate(({ postId, channelId }) => sessionStorage.setItem('shorts-factory:local-export:owner-1:workspace-1', JSON.stringify({ keys: {}, postId, channelId })), { postId, channelId });
   await page.goto('/studio?mode=import');
   await expect(page.getByText('Đã nhập và duyệt nguồn.', { exact: true })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Thiết lập video', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Chọn giọng và soạn lời đọc', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: '3. Tạo video local', exact: true })).toHaveCount(0);
   expect(fixture.mutations.some(entry => entry.path.endsWith('/produce'))).toBe(false);
 });
